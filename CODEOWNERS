@@ -1,0 +1,30 @@
+# Code Owners
+#
+# This file defines who owns which parts of the codebase.
+# When a PR modifies owned files, the owners must be notified.
+#
+# Lines starting with '#' are comments.
+# Each line is a file pattern followed by one or more owners.
+# Order matters - last matching pattern takes precedence.
+
+# Default owner for everything in the repo
+# * @sp-loomis
+
+# Workflow files - must be reviewed by repo owner
+/.github/workflows/ @sp-loomis
+
+# Project instructions for Claude - must be reviewed by repo owner
+/.claude/CLAUDE.md @sp-loomis
+/.claude/settings.json @sp-loomis
+
+# Project instructions for Gemini - must be reviewed by repo owner
+/GEMINI.md @sp-loomis
+
+# Code ownership definitions - must be reviewed by repo owner
+/CODEOWNERS @sp-loomis
+
+# Example: Add your own code ownership patterns below
+# /src/api/ @backend-team
+# /src/components/ @frontend-team
+# /docs/ @documentation-team
+# *.md @documentation-team

@@ -1,0 +1,41 @@
+name: Claude Issue Handler
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  claude-handler:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Gemini CLI
+        run: |
+          npm install -g @google/generative-ai-cli
+
+      - name: Run Claude Code Action
+        uses: anthropics/claude-code-action@v1
+        timeout-minutes: 30
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

@@ -3,7 +3,7 @@
 Pantry CLI - Command-line interface for the Pantry App
 
 This CLI provides commands for managing storage locations and inventory items
-in the Pantry App system.
+in the Pantry App system. All outputs are formatted as JSON to match API responses.
 """
 
 import os
@@ -14,13 +14,7 @@ from datetime import datetime
 
 import boto3
 import click
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
 from dateutil.parser import parse as parse_date
-
-# Initialize console for rich output
-console = Console()
 
 # Initialize Lambda client
 lambda_client = boto3.client('lambda')
@@ -52,11 +46,12 @@ def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_par
 
         # Check for Lambda execution errors
         if 'errorMessage' in payload:
-            console.print(f"[red]Lambda execution error: {payload.get('errorMessage')}[/red]")
-            if 'errorType' in payload:
-                console.print(f"[yellow]Error type: {payload['errorType']}[/yellow]")
-            if 'stackTrace' in payload:
-                console.print(f"[dim]Stack trace: {json.dumps(payload['stackTrace'], indent=2)}[/dim]")
+            error_response = {
+                "error": payload.get('errorMessage'),
+                "errorType": payload.get('errorType'),
+                "stackTrace": payload.get('stackTrace')
+            }
+            print(json.dumps(error_response, indent=2))
             sys.exit(1)
 
         # Parse the response body
@@ -65,7 +60,8 @@ def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_par
         return payload
 
     except Exception as e:
-        console.print(f"[red]Error invoking Lambda: {str(e)}[/red]")
+        error_response = {"error": str(e)}
+        print(json.dumps(error_response, indent=2))
         sys.exit(1)
 
 
@@ -95,23 +91,10 @@ def create_location(name: str, description: str):
         'description': description
     })
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    if 'location' not in result:
-        console.print(f"[red]Unexpected response format. Expected 'location' key but got: {list(result.keys())}[/red]")
-        console.print(f"[yellow]Full response: {json.dumps(result, indent=2)}[/yellow]")
-        sys.exit(1)
-
-    location = result['location']
-    console.print(Panel(
-        f"[green]Location created successfully![/green]\n\n"
-        f"ID: {location['location_id']}\n"
-        f"Name: {location['name']}\n"
-        f"Description: {location['description']}",
-        title="New Location"
-    ))
 
 
 @location.command(name='list')
@@ -119,31 +102,10 @@ def list_locations():
     """List all storage locations."""
     result = invoke_lambda('GET', '/locations')
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    locations = result.get('locations', [])
-
-    if not locations:
-        console.print("[yellow]No locations found.[/yellow]")
-        return
-
-    table = Table(title="Storage Locations")
-    table.add_column("ID", style="cyan")
-    table.add_column("Name", style="green")
-    table.add_column("Description", style="white")
-    table.add_column("Created", style="yellow")
-
-    for loc in locations:
-        table.add_row(
-            loc['location_id'][:8] + '...',
-            loc['name'],
-            loc.get('description', ''),
-            loc['created_at'][:10]
-        )
-
-    console.print(table)
 
 
 @location.command(name='get')
@@ -152,19 +114,10 @@ def get_location(location_id: str):
     """Get details of a specific location."""
     result = invoke_lambda('GET', f'/locations/{location_id}')
 
-    if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
-        sys.exit(1)
+    print(json.dumps(result, indent=2))
 
-    loc = result['location']
-    console.print(Panel(
-        f"ID: {loc['location_id']}\n"
-        f"Name: {loc['name']}\n"
-        f"Description: {loc.get('description', '')}\n"
-        f"Created: {loc['created_at']}\n"
-        f"Updated: {loc['updated_at']}",
-        title=f"Location: {loc['name']}"
-    ))
+    if 'error' in result:
+        sys.exit(1)
 
 
 @location.command(name='update')
@@ -180,16 +133,15 @@ def update_location(location_id: str, name: Optional[str], description: Optional
         updates['description'] = description
 
     if not updates:
-        console.print("[yellow]No updates provided.[/yellow]")
-        return
+        print(json.dumps({"error": "No updates provided"}, indent=2))
+        sys.exit(1)
 
     result = invoke_lambda('PUT', f'/locations/{location_id}', updates)
 
-    if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
-        sys.exit(1)
+    print(json.dumps(result, indent=2))
 
-    console.print("[green]Location updated successfully![/green]")
+    if 'error' in result:
+        sys.exit(1)
 
 
 @location.command(name='delete')
@@ -199,11 +151,10 @@ def delete_location(location_id: str):
     """Delete a storage location."""
     result = invoke_lambda('DELETE', f'/locations/{location_id}')
 
-    if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
-        sys.exit(1)
+    print(json.dumps(result, indent=2))
 
-    console.print("[green]Location deleted successfully![/green]")
+    if 'error' in result:
+        sys.exit(1)
 
 
 # ============================================================================
@@ -271,7 +222,7 @@ def add_item(name: str, location: str, quantity: float, unit: str, count: Option
             parsed_date = parse_date(use_by)
             item_data['use_by_date'] = parsed_date.isoformat()
         except ValueError:
-            console.print("[red]Invalid date format. Use YYYY-MM-DD[/red]")
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
             sys.exit(1)
 
     if tags:
@@ -279,35 +230,10 @@ def add_item(name: str, location: str, quantity: float, unit: str, count: Option
 
     result = invoke_lambda('POST', '/items', item_data)
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    if 'item' not in result:
-        console.print(f"[red]Unexpected response format. Expected 'item' key but got: {list(result.keys())}[/red]")
-        console.print(f"[yellow]Full response: {json.dumps(result, indent=2)}[/yellow]")
-        sys.exit(1)
-
-    item = result['item']
-
-    # Format dimensions for display
-    dimensions_text = ""
-    if item.get('dimensions'):
-        dimensions_text = "Dimensions:\n"
-        for dim in item['dimensions']:
-            dim_type = dim['dimension_type'].capitalize()
-            dimensions_text += f"  {dim_type}: {dim['value']} {dim['unit']}\n"
-
-    console.print(Panel(
-        f"[green]Item added successfully![/green]\n\n"
-        f"ID: {item['item_id']}\n"
-        f"Name: {item['name']}\n"
-        f"Quantity: {item['quantity']} {item['unit']}\n" +
-        dimensions_text +
-        f"Location: {item['location_id']}\n" +
-        (f"Use by: {item['use_by_date']}\n" if item.get('use_by_date') else ""),
-        title="New Item"
-    ))
 
 
 @item.command(name='list')
@@ -326,46 +252,10 @@ def list_items(location: Optional[str], tag: Optional[str], name: Optional[str])
 
     result = invoke_lambda('GET', '/items', query_params=query_params)
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    items = result.get('items', [])
-
-    if not items:
-        console.print("[yellow]No items found.[/yellow]")
-        return
-
-    table = Table(title="Inventory Items")
-    table.add_column("ID", style="cyan")
-    table.add_column("Name", style="green")
-    table.add_column("Quantity", style="yellow")
-    table.add_column("Dimensions", style="magenta")
-    table.add_column("Location", style="blue")
-    table.add_column("Use By", style="red")
-    table.add_column("Tags", style="white")
-
-    for item in items:
-        # Format dimensions for compact display
-        dimensions_str = ""
-        if item.get('dimensions'):
-            dim_parts = []
-            for dim in item['dimensions']:
-                dim_type_short = dim['dimension_type'][0].upper()  # C, W, or V
-                dim_parts.append(f"{dim_type_short}:{dim['value']}{dim['unit']}")
-            dimensions_str = " ".join(dim_parts)
-
-        table.add_row(
-            item['item_id'][:8] + '...',
-            item['name'],
-            f"{item['quantity']} {item['unit']}",
-            dimensions_str,
-            item['location_id'][:8] + '...',
-            item.get('use_by_date', 'N/A')[:10] if item.get('use_by_date') else 'N/A',
-            ', '.join(item.get('tags', []))
-        )
-
-    console.print(table)
 
 
 @item.command(name='get')
@@ -374,33 +264,10 @@ def get_item(item_id: str):
     """Get details of a specific item."""
     result = invoke_lambda('GET', f'/items/{item_id}')
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    item = result['item']
-
-    # Format dimensions for display
-    dimensions_text = ""
-    if item.get('dimensions'):
-        dimensions_text = "Dimensions:\n"
-        for dim in item['dimensions']:
-            dim_type = dim['dimension_type'].capitalize()
-            dimensions_text += f"  {dim_type}: {dim['value']} {dim['unit']}\n"
-
-    console.print(Panel(
-        f"ID: {item['item_id']}\n"
-        f"Name: {item['name']}\n"
-        f"Quantity: {item['quantity']} {item['unit']}\n" +
-        dimensions_text +
-        f"Location: {item['location_id']}\n"
-        f"Use by: {item.get('use_by_date', 'N/A')}\n"
-        f"Tags: {', '.join(item.get('tags', []))}\n"
-        f"Notes: {item.get('notes', '')}\n"
-        f"Created: {item['created_at']}\n"
-        f"Updated: {item['updated_at']}",
-        title=f"Item: {item['name']}"
-    ))
 
 
 @item.command(name='update')
@@ -462,7 +329,7 @@ def update_item(item_id: str, name: Optional[str], location: Optional[str], quan
             parsed_date = parse_date(use_by)
             updates['use_by_date'] = parsed_date.isoformat()
         except ValueError:
-            console.print("[red]Invalid date format. Use YYYY-MM-DD[/red]")
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
             sys.exit(1)
     if tags:
         updates['tags'] = [tag.strip() for tag in tags.split(',')]
@@ -470,16 +337,15 @@ def update_item(item_id: str, name: Optional[str], location: Optional[str], quan
         updates['notes'] = notes
 
     if not updates:
-        console.print("[yellow]No updates provided.[/yellow]")
-        return
+        print(json.dumps({"error": "No updates provided"}, indent=2))
+        sys.exit(1)
 
     result = invoke_lambda('PUT', f'/items/{item_id}', updates)
 
-    if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
-        sys.exit(1)
+    print(json.dumps(result, indent=2))
 
-    console.print("[green]Item updated successfully![/green]")
+    if 'error' in result:
+        sys.exit(1)
 
 
 @item.command(name='remove')
@@ -489,11 +355,10 @@ def remove_item(item_id: str):
     """Remove an inventory item (mark as used)."""
     result = invoke_lambda('DELETE', f'/items/{item_id}')
 
-    if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
-        sys.exit(1)
+    print(json.dumps(result, indent=2))
 
-    console.print("[green]Item removed successfully![/green]")
+    if 'error' in result:
+        sys.exit(1)
 
 
 @item.command(name='expiring')
@@ -507,42 +372,10 @@ def expiring_items(location: Optional[str], days: int):
 
     result = invoke_lambda('GET', '/items/expiring', query_params=query_params)
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    items = result.get('items', [])
-
-    if not items:
-        console.print(f"[green]No items expiring in the next {days} days.[/green]")
-        return
-
-    table = Table(title=f"Items Expiring in {days} Days")
-    table.add_column("Name", style="green")
-    table.add_column("Quantity", style="yellow")
-    table.add_column("Dimensions", style="magenta")
-    table.add_column("Location", style="blue")
-    table.add_column("Use By", style="red")
-
-    for item in items:
-        # Format dimensions for compact display
-        dimensions_str = ""
-        if item.get('dimensions'):
-            dim_parts = []
-            for dim in item['dimensions']:
-                dim_type_short = dim['dimension_type'][0].upper()
-                dim_parts.append(f"{dim_type_short}:{dim['value']}{dim['unit']}")
-            dimensions_str = " ".join(dim_parts)
-
-        table.add_row(
-            item['name'],
-            f"{item['quantity']} {item['unit']}",
-            dimensions_str,
-            item['location_id'][:8] + '...',
-            item.get('use_by_date', 'N/A')[:10]
-        )
-
-    console.print(table)
 
 
 # ============================================================================
@@ -573,44 +406,10 @@ def search_items(name: Optional[str], location: Optional[str], tags: Optional[st
 
     result = invoke_lambda('POST', '/search', search_data)
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    items = result.get('items', [])
-
-    if not items:
-        console.print("[yellow]No items found matching the search criteria.[/yellow]")
-        return
-
-    table = Table(title="Search Results")
-    table.add_column("Name", style="green")
-    table.add_column("Quantity", style="yellow")
-    table.add_column("Dimensions", style="magenta")
-    table.add_column("Location", style="blue")
-    table.add_column("Use By", style="red")
-    table.add_column("Tags", style="white")
-
-    for item in items:
-        # Format dimensions for compact display
-        dimensions_str = ""
-        if item.get('dimensions'):
-            dim_parts = []
-            for dim in item['dimensions']:
-                dim_type_short = dim['dimension_type'][0].upper()
-                dim_parts.append(f"{dim_type_short}:{dim['value']}{dim['unit']}")
-            dimensions_str = " ".join(dim_parts)
-
-        table.add_row(
-            item['name'],
-            f"{item['quantity']} {item['unit']}",
-            dimensions_str,
-            item['location_id'][:8] + '...',
-            item.get('use_by_date', 'N/A')[:10] if item.get('use_by_date') else 'N/A',
-            ', '.join(item.get('tags', []))
-        )
-
-    console.print(table)
 
 
 @cli.command(name='stats')
@@ -632,45 +431,10 @@ def aggregate_stats(location: Optional[str], tag: Optional[str], weight_unit: Op
 
     result = invoke_lambda('GET', '/aggregate', query_params=query_params)
 
+    print(json.dumps(result, indent=2))
+
     if 'error' in result:
-        console.print(f"[red]Error: {result['error']}[/red]")
         sys.exit(1)
-
-    stats = result['stats']
-
-    table = Table(title="Inventory Statistics")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="yellow")
-
-    table.add_row("Total Items", str(stats['total_items']))
-    table.add_row("Total Quantity", str(stats['total_quantity']))
-    table.add_row("Items with Expiry Date", str(stats['items_with_expiry']))
-
-    console.print(table)
-
-    # Display aggregated dimensions
-    if stats.get('aggregated_dimensions'):
-        dim_table = Table(title="Aggregated Dimensions")
-        dim_table.add_column("Dimension Type", style="cyan")
-        dim_table.add_column("Total", style="yellow")
-
-        for dim_type, dim_data in stats['aggregated_dimensions'].items():
-            dim_type_display = dim_type.capitalize()
-            value_display = f"{dim_data['value']:.2f} {dim_data['unit']}"
-            dim_table.add_row(dim_type_display, value_display)
-
-        console.print(dim_table)
-
-    # Display legacy quantities by unit
-    if stats.get('quantities_by_unit'):
-        unit_table = Table(title="Quantities by Unit (Legacy)")
-        unit_table.add_column("Unit", style="green")
-        unit_table.add_column("Total Quantity", style="yellow")
-
-        for unit, qty in stats['quantities_by_unit'].items():
-            unit_table.add_row(unit, str(qty))
-
-        console.print(unit_table)
 
 
 if __name__ == '__main__':

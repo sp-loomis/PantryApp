@@ -23,7 +23,7 @@ from services import ItemService, LocationService, TagService
 # Initialize Powertools utilities
 logger = Logger()
 tracer = Tracer()
-metrics = Metrics()
+metrics = Metrics(namespace="PantryApp")
 app = APIGatewayRestResolver()
 
 # Initialize DynamoDB resource

@@ -35,7 +35,10 @@ def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_par
         "httpMethod": method,
         "path": path,
         "body": json.dumps(body) if body else None,
-        "queryStringParameters": query_params
+        "queryStringParameters": query_params,
+        "headers": {},
+        "requestContext": {"requestId": "cli-request"},
+        "isBase64Encoded": False
     }
 
     try:
@@ -46,6 +49,15 @@ def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_par
         )
 
         payload = json.loads(response['Payload'].read())
+
+        # Check for Lambda execution errors
+        if 'errorMessage' in payload:
+            console.print(f"[red]Lambda execution error: {payload.get('errorMessage')}[/red]")
+            if 'errorType' in payload:
+                console.print(f"[yellow]Error type: {payload['errorType']}[/yellow]")
+            if 'stackTrace' in payload:
+                console.print(f"[dim]Stack trace: {json.dumps(payload['stackTrace'], indent=2)}[/dim]")
+            sys.exit(1)
 
         # Parse the response body
         if 'body' in payload:
@@ -85,6 +97,11 @@ def create_location(name: str, description: str):
 
     if 'error' in result:
         console.print(f"[red]Error: {result['error']}[/red]")
+        sys.exit(1)
+
+    if 'location' not in result:
+        console.print(f"[red]Unexpected response format. Expected 'location' key but got: {list(result.keys())}[/red]")
+        console.print(f"[yellow]Full response: {json.dumps(result, indent=2)}[/yellow]")
         sys.exit(1)
 
     location = result['location']
@@ -233,6 +250,11 @@ def add_item(name: str, location: str, quantity: float, unit: str, use_by: Optio
 
     if 'error' in result:
         console.print(f"[red]Error: {result['error']}[/red]")
+        sys.exit(1)
+
+    if 'item' not in result:
+        console.print(f"[red]Unexpected response format. Expected 'item' key but got: {list(result.keys())}[/red]")
+        console.print(f"[yellow]Full response: {json.dumps(result, indent=2)}[/yellow]")
         sys.exit(1)
 
     item = result['item']

@@ -1,31 +1,447 @@
 # Pantry App - Inventory Management System
 
-A comprehensive inventory management system for tracking items across multiple storage locations (pantries, freezers, feed storage, etc.). Built with AWS serverless architecture and managed through an AI-assisted development workflow.
+A serverless inventory management system for tracking items across multiple storage locations. Built with AWS Lambda, DynamoDB, and a Python CLI that maintains strict alignment with the REST API.
 
-## Overview
+## Quick Start
 
-The Pantry App helps you track:
-- **Storage Locations**: Manage multiple storage areas (pantry, freezers, tack room, etc.)
-- **Inventory Items**: Track what you have, where it is, and how much
-- **Expiration Dates**: Never lose track of use-by dates
-- **Tags**: Flexible categorization for easy searching
-- **Quantities**: Track dimensions and units for each item
-- **Search & Query**: Advanced filtering and aggregate statistics
+### Prerequisites
+- AWS Account with appropriate permissions
+- Python 3.11+
+- AWS CLI configured
+
+### Setup
+
+1. **Install CLI dependencies:**
+   ```bash
+   cd frontend/cli
+   pip install -r requirements.txt
+   chmod +x pantry_cli.py
+   ```
+
+2. **Configure Lambda function name:**
+   ```bash
+   export PANTRY_LAMBDA_FUNCTION=dev-use2-pantry-lambda-core-api
+   ```
+
+## API & CLI Documentation
+
+The CLI maintains a one-to-one correspondence with the API. Every API endpoint has an equivalent CLI command that accepts the same parameters and returns the same JSON responses.
+
+### Locations
+
+Storage locations represent physical areas where inventory is stored (pantry, freezer, tack room, etc.).
+
+#### Create Location
+
+**API Endpoint:** `POST /locations`
+
+**CLI Command:**
+```bash
+./pantry_cli.py location create --name <name> [--description <description>]
+```
+
+**Input:**
+```json
+{
+  "name": "Main Freezer",
+  "description": "Large chest freezer in garage"
+}
+```
+
+**Output:**
+```json
+{
+  "location": {
+    "location_id": "loc_abc123",
+    "name": "Main Freezer",
+    "description": "Large chest freezer in garage",
+    "created_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+#### List Locations
+
+**API Endpoint:** `GET /locations`
+
+**CLI Command:**
+```bash
+./pantry_cli.py location list
+```
+
+**Output:**
+```json
+{
+  "locations": [
+    {
+      "location_id": "loc_abc123",
+      "name": "Main Freezer",
+      "description": "Large chest freezer in garage",
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+#### Get Location
+
+**API Endpoint:** `GET /locations/<location_id>`
+
+**CLI Command:**
+```bash
+./pantry_cli.py location get <location_id>
+```
+
+**Output:**
+```json
+{
+  "location": {
+    "location_id": "loc_abc123",
+    "name": "Main Freezer",
+    "description": "Large chest freezer in garage",
+    "created_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+#### Update Location
+
+**API Endpoint:** `PUT /locations/<location_id>`
+
+**CLI Command:**
+```bash
+./pantry_cli.py location update <location_id> [--name <name>] [--description <description>]
+```
+
+**Input:**
+```json
+{
+  "name": "Large Freezer",
+  "description": "Updated description"
+}
+```
+
+**Output:**
+```json
+{
+  "location": {
+    "location_id": "loc_abc123",
+    "name": "Large Freezer",
+    "description": "Updated description",
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-01-20T14:20:00Z"
+  }
+}
+```
+
+#### Delete Location
+
+**API Endpoint:** `DELETE /locations/<location_id>`
+
+**CLI Command:**
+```bash
+./pantry_cli.py location delete <location_id>
+```
+
+**Output:**
+```json
+{
+  "message": "Location deleted successfully"
+}
+```
+
+### Items
+
+Inventory items track what you have, where it is, quantity, dimensions, expiration dates, and tags.
+
+#### Add Item
+
+**API Endpoint:** `POST /items`
+
+**CLI Command:**
+```bash
+./pantry_cli.py item add --name <name> --location <location_id> \
+  [--quantity <qty>] [--unit <unit>] \
+  [--count <value>] \
+  [--weight <value>] [--weight-unit <unit>] \
+  [--volume <value>] [--volume-unit <unit>] \
+  [--use-by <YYYY-MM-DD>] [--tags <tag1,tag2>] [--notes <text>]
+```
+
+**Input:**
+```json
+{
+  "name": "Ground Beef",
+  "location_id": "loc_abc123",
+  "quantity": 5,
+  "unit": "lbs",
+  "dimensions": [
+    {
+      "dimension_type": "weight",
+      "value": 5,
+      "unit": "lb"
+    },
+    {
+      "dimension_type": "count",
+      "value": 3,
+      "unit": "units"
+    }
+  ],
+  "use_by_date": "2024-03-15T00:00:00Z",
+  "tags": ["meat", "frozen"],
+  "notes": "From farmer's market"
+}
+```
+
+**Output:**
+```json
+{
+  "item": {
+    "item_id": "item_xyz789",
+    "name": "Ground Beef",
+    "location_id": "loc_abc123",
+    "quantity": 5,
+    "unit": "lbs",
+    "dimensions": [
+      {
+        "dimension_type": "weight",
+        "value": 5,
+        "unit": "lb"
+      },
+      {
+        "dimension_type": "count",
+        "value": 3,
+        "unit": "units"
+      }
+    ],
+    "use_by_date": "2024-03-15T00:00:00Z",
+    "tags": ["meat", "frozen"],
+    "notes": "From farmer's market",
+    "created_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+**Dimension Types:**
+- **count**: Number of items (units)
+- **weight**: Weight (g, kg, oz, lb)
+- **volume**: Volume (ml, l, tsp, tbsp, fl oz, cup, pint, quart, gallon)
+
+#### List Items
+
+**API Endpoint:** `GET /items[?location_id=<id>&tag=<tag>&name=<name>]`
+
+**CLI Command:**
+```bash
+./pantry_cli.py item list [--location <location_id>] [--tag <tag>] [--name <name>]
+```
+
+**Output:**
+```json
+{
+  "items": [
+    {
+      "item_id": "item_xyz789",
+      "name": "Ground Beef",
+      "location_id": "loc_abc123",
+      "quantity": 5,
+      "unit": "lbs",
+      "dimensions": [...],
+      "use_by_date": "2024-03-15T00:00:00Z",
+      "tags": ["meat", "frozen"],
+      "notes": "From farmer's market",
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+#### Get Item
+
+**API Endpoint:** `GET /items/<item_id>`
+
+**CLI Command:**
+```bash
+./pantry_cli.py item get <item_id>
+```
+
+**Output:**
+```json
+{
+  "item": {
+    "item_id": "item_xyz789",
+    "name": "Ground Beef",
+    "location_id": "loc_abc123",
+    "quantity": 5,
+    "unit": "lbs",
+    "dimensions": [...],
+    "use_by_date": "2024-03-15T00:00:00Z",
+    "tags": ["meat", "frozen"],
+    "notes": "From farmer's market",
+    "created_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+#### Update Item
+
+**API Endpoint:** `PUT /items/<item_id>`
+
+**CLI Command:**
+```bash
+./pantry_cli.py item update <item_id> \
+  [--name <name>] [--location <location_id>] \
+  [--quantity <qty>] [--unit <unit>] \
+  [--count <value>] \
+  [--weight <value>] [--weight-unit <unit>] \
+  [--volume <value>] [--volume-unit <unit>] \
+  [--use-by <YYYY-MM-DD>] [--tags <tag1,tag2>] [--notes <text>]
+```
+
+**Input:** Same structure as Add Item (only include fields to update)
+
+**Output:** Same structure as Get Item with updated values
+
+#### Remove Item
+
+**API Endpoint:** `DELETE /items/<item_id>`
+
+**CLI Command:**
+```bash
+./pantry_cli.py item remove <item_id>
+```
+
+**Output:**
+```json
+{
+  "message": "Item deleted successfully"
+}
+```
+
+#### Get Expiring Items
+
+**API Endpoint:** `GET /items/expiring[?location_id=<id>&days=<days>]`
+
+**CLI Command:**
+```bash
+./pantry_cli.py item expiring [--location <location_id>] [--days <days>]
+```
+
+**Query Parameters:**
+- `location_id` (optional): Filter by location
+- `days` (optional): Number of days to look ahead (default: 7)
+
+**Output:**
+```json
+{
+  "items": [
+    {
+      "item_id": "item_xyz789",
+      "name": "Ground Beef",
+      "location_id": "loc_abc123",
+      "use_by_date": "2024-03-15T00:00:00Z",
+      "days_until_expiry": 3,
+      ...
+    }
+  ]
+}
+```
+
+### Search & Statistics
+
+#### Advanced Search
+
+**API Endpoint:** `POST /search`
+
+**CLI Command:**
+```bash
+./pantry_cli.py search \
+  [--name <name>] [--location <location_id>] \
+  [--tags <tag1,tag2>] \
+  [--use-by-start <YYYY-MM-DD>] [--use-by-end <YYYY-MM-DD>]
+```
+
+**Input:**
+```json
+{
+  "name": "beef",
+  "location_id": "loc_abc123",
+  "tags": ["meat", "frozen"],
+  "use_by_date_start": "2024-01-01",
+  "use_by_date_end": "2024-12-31"
+}
+```
+
+**Output:**
+```json
+{
+  "items": [
+    {
+      "item_id": "item_xyz789",
+      "name": "Ground Beef",
+      ...
+    }
+  ]
+}
+```
+
+#### Aggregate Statistics
+
+**API Endpoint:** `GET /aggregate[?location_id=<id>&tag=<tag>&weight_unit=<unit>&volume_unit=<unit>]`
+
+**CLI Command:**
+```bash
+./pantry_cli.py stats \
+  [--location <location_id>] [--tag <tag>] \
+  [--weight-unit <unit>] [--volume-unit <unit>]
+```
+
+**Query Parameters:**
+- `location_id` (optional): Filter by location
+- `tag` (optional): Filter by tag
+- `weight_unit` (optional): Preferred weight unit for aggregation (g, kg, oz, lb)
+- `volume_unit` (optional): Preferred volume unit for aggregation (ml, l, cup, gallon, etc.)
+
+**Output:**
+```json
+{
+  "stats": {
+    "total_items": 42,
+    "total_locations": 5,
+    "items_expiring_soon": 3,
+    "dimensions": {
+      "total_count": 150,
+      "total_weight": {
+        "value": 250.5,
+        "unit": "lb"
+      },
+      "total_volume": {
+        "value": 45.2,
+        "unit": "gallon"
+      }
+    },
+    "by_location": {
+      "loc_abc123": {
+        "name": "Main Freezer",
+        "item_count": 20,
+        "dimensions": {...}
+      }
+    }
+  }
+}
+```
 
 ## Architecture
 
 ### Tech Stack
-- **Frontend**: Python CLI with Rich library for enhanced terminal output
 - **Backend**: AWS Lambda with Lambda Powertools (Python 3.11)
-  - **Powertools via Lambda Layer**: Uses AWS-managed layer (no bundling required)
-  - ARN: `arn:aws:lambda:us-east-2:017000801446:layer:AWSLambdaPowertoolsPythonV3-python311-x86_64:3`
-  - Provides structured logging, tracing, metrics, and API Gateway integration
-- **Database**: DynamoDB with optimized GSIs for different access patterns
-- **Infrastructure**: Terraform/Terragrunt for Infrastructure as Code
-- **Deployment**: GitHub Actions with OIDC authentication (no hardcoded credentials)
+- **Database**: DynamoDB with GSIs for optimized access patterns
+- **Frontend**: Python CLI with Click (outputs JSON matching API responses)
+- **Infrastructure**: Terraform/Terragrunt
+- **Deployment**: GitHub Actions with OIDC authentication
 - **Region**: US-East-2 (Ohio)
 
-### Database Design
+### Database Tables
 
 #### Items Table
 - **Primary Key**: `item_id` (hash), `created_at` (range)
@@ -33,313 +449,64 @@ The Pantry App helps you track:
   - `LocationIndex`: Query items by location
   - `UseByDateIndex`: Query items by expiration date
   - `ItemNameIndex`: Search items by name
-- **Attributes**: name, location_id, quantity, unit, use_by_date, notes
 
 #### Locations Table
 - **Primary Key**: `location_id` (hash)
-- **Attributes**: name, description
 
 #### Item-Tags Table
 - **Primary Key**: `tag_name` (hash), `item_id` (range)
-- **GSI**: `ItemTagsIndex` for reverse lookup (item_id -> tags)
+- **GSI**: `ItemTagsIndex` for reverse lookup
 
 ### Resource Naming Convention
 All AWS resources follow: `{environment}-{region}-{project}-{resource_type}-{resource_name}`
 
 Example: `dev-use2-pantry-lambda-core-api`
 
-## Directory Structure
+## Development
+
+### Directory Structure
 
 ```
 PantryApp/
-├── frontend/
-│   └── cli/                    # Python CLI application
-│       ├── pantry_cli.py      # Main CLI with Click commands
-│       └── requirements.txt    # Python dependencies
-├── backend/                    # Lambda function code
-│   ├── app.py                 # Main Lambda handler with Powertools
-│   ├── models.py              # Data models (Item, Location, ItemTag)
-│   ├── services.py            # Business logic services
-│   └── requirements.txt       # Lambda dependencies
-├── terraform/
-│   ├── root.hcl               # Root Terragrunt configuration
-│   ├── modules/               # Reusable Terraform modules
-│   │   ├── dynamodb_table/    # DynamoDB table module
-│   │   ├── lambda_function/   # Lambda function module
-│   │   ├── iam_role/          # IAM role module
-│   │   └── main/              # Main infrastructure composition
-│   └── environments/
-│       ├── dev/               # Dev environment config
-│       │   ├── globals.hcl
-│       │   └── terragrunt.hcl
-│       └── prod/              # Prod environment config
-│           ├── globals.hcl
-│           └── terragrunt.hcl
-└── .github/workflows/
-    ├── claude-issue-handler.yml  # AI-assisted development workflow
-    └── deploy.yml                # Infrastructure deployment
+├── frontend/cli/           # Python CLI application
+├── backend/                # Lambda function code
+│   ├── app.py             # Main Lambda handler with Powertools
+│   ├── models.py          # Data models
+│   └── services.py        # Business logic services
+├── terraform/             # Infrastructure as Code
+│   ├── modules/           # Reusable Terraform modules
+│   └── environments/      # Environment configurations
+└── .github/workflows/     # CI/CD workflows
 ```
-
-## Getting Started
-
-### Prerequisites
-- AWS Account with appropriate permissions
-- Python 3.11+
-- Terraform 1.6+
-- Terragrunt 0.54+
-- AWS CLI configured
-
-### Initial Setup
-
-#### 1. Configure AWS OIDC
-Set up GitHub OIDC provider in AWS for secure, credential-free deployments:
-
-1. Create an OIDC provider in IAM:
-   - Provider URL: `https://token.actions.githubusercontent.com`
-   - Audience: `sts.amazonaws.com`
-
-2. Create an IAM role with trust policy for GitHub Actions:
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Principal": {
-           "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-         },
-         "Action": "sts:AssumeRoleWithWebIdentity",
-         "Condition": {
-           "StringEquals": {
-             "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-             "token.actions.githubusercontent.com:sub": "repo:YOUR_ORG/PantryApp:ref:refs/heads/main"
-           }
-         }
-       }
-     ]
-   }
-   ```
-
-3. Add the role ARN to GitHub Secrets:
-   - Go to Settings > Secrets and variables > Actions
-   - Add `AWS_ROLE_ARN` with the IAM role ARN
-
-#### 2. Create Remote State Resources
-Before deploying, manually create the S3 bucket and DynamoDB table for Terraform state.
-
-**Important**: Terragrunt requires the S3 bucket to have versioning enabled and a bucket policy configured. Follow these steps:
-
-```bash
-# For dev environment
-BUCKET_NAME="dev-use2-pantry-terraform-state"
-REGION="us-east-2"
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-# 1. Create the S3 bucket
-aws s3 mb s3://${BUCKET_NAME} --region ${REGION}
-
-# 2. Enable versioning (required by Terragrunt)
-aws s3api put-bucket-versioning \
-  --bucket ${BUCKET_NAME} \
-  --versioning-configuration Status=Enabled \
-  --region ${REGION}
-
-# 3. Enable server-side encryption
-aws s3api put-bucket-encryption \
-  --bucket ${BUCKET_NAME} \
-  --server-side-encryption-configuration '{
-    "Rules": [{
-      "ApplyServerSideEncryptionByDefault": {
-        "SSEAlgorithm": "AES256"
-      },
-      "BucketKeyEnabled": false
-    }]
-  }' \
-  --region ${REGION}
-
-# 4. Block public access (security best practice)
-aws s3api put-public-access-block \
-  --bucket ${BUCKET_NAME} \
-  --public-access-block-configuration \
-    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" \
-  --region ${REGION}
-
-# 5. Add bucket policy (required by Terragrunt)
-# Save this policy to bucket-policy.json:
-cat > bucket-policy.json <<'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "EnforcedTLS",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::dev-use2-pantry-terraform-state",
-        "arn:aws:s3:::dev-use2-pantry-terraform-state/*"
-      ],
-      "Condition": {
-        "Bool": {
-          "aws:SecureTransport": "false"
-        }
-      }
-    }
-  ]
-}
-EOF
-
-# Apply the policy
-aws s3api put-bucket-policy \
-  --bucket ${BUCKET_NAME} \
-  --policy file://bucket-policy.json \
-  --region ${REGION}
-
-# 6. Create DynamoDB table for state locking
-aws dynamodb create-table \
-  --table-name dev-use2-pantry-terraform-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --region ${REGION}
-```
-
-**For prod environment**, repeat the above steps with:
-```bash
-BUCKET_NAME="prod-use2-pantry-terraform-state"
-# ... (same commands with prod bucket name)
-```
-
-**What these commands do:**
-- **Versioning**: Allows you to roll back to previous Terraform state versions if needed
-- **Encryption**: Ensures state files are encrypted at rest
-- **Public Access Block**: Prevents accidental public exposure of state files
-- **Bucket Policy**: Enforces TLS/HTTPS for all connections (security requirement)
-- **DynamoDB Table**: Provides state locking to prevent concurrent modifications
-
-#### 3. Deploy Infrastructure
-Push changes to trigger deployment or manually run:
-
-```bash
-# Deploy to dev
-gh workflow run deploy.yml -f environment=dev
-
-# Deploy to prod
-gh workflow run deploy.yml -f environment=prod
-```
-
-### Using the CLI
-
-#### Installation
-```bash
-cd frontend/cli
-pip install -r requirements.txt
-chmod +x pantry_cli.py
-```
-
-#### Configure Lambda Function Name
-```bash
-export PANTRY_LAMBDA_FUNCTION=dev-use2-pantry-lambda-core-api
-```
-
-#### Example Commands
-
-**Manage Locations:**
-```bash
-# Create a location
-./pantry_cli.py location create --name "Main Freezer" --description "Large chest freezer in garage"
-
-# List all locations
-./pantry_cli.py location list
-
-# Get location details
-./pantry_cli.py location get <location-id>
-```
-
-**Manage Items:**
-```bash
-# Add an item
-./pantry_cli.py item add \
-  --name "Ground Beef" \
-  --location <location-id> \
-  --quantity 5 \
-  --unit "lbs" \
-  --use-by "2024-03-15" \
-  --tags "meat,frozen" \
-  --notes "From farmer's market"
-
-# List all items
-./pantry_cli.py item list
-
-# List items by location
-./pantry_cli.py item list --location <location-id>
-
-# List items by tag
-./pantry_cli.py item list --tag "frozen"
-
-# Check expiring items
-./pantry_cli.py item expiring --days 7
-```
-
-**Search and Stats:**
-```bash
-# Advanced search
-./pantry_cli.py search \
-  --name "beef" \
-  --location <location-id> \
-  --tags "meat,frozen" \
-  --use-by-start "2024-01-01" \
-  --use-by-end "2024-12-31"
-
-# Get aggregate statistics
-./pantry_cli.py stats
-./pantry_cli.py stats --location <location-id>
-./pantry_cli.py stats --tag "frozen"
-```
-
-## API Endpoints
-
-The Lambda function exposes the following REST-style endpoints:
-
-### Locations
-- `POST /locations` - Create location
-- `GET /locations` - List all locations
-- `GET /locations/{id}` - Get location
-- `PUT /locations/{id}` - Update location
-- `DELETE /locations/{id}` - Delete location
-
-### Items
-- `POST /items` - Create item
-- `GET /items` - List items (with optional filters)
-- `GET /items/{id}` - Get item
-- `PUT /items/{id}` - Update item
-- `DELETE /items/{id}` - Delete item
-- `GET /items/expiring` - Get expiring items
-
-### Search
-- `POST /search` - Advanced search
-- `GET /aggregate` - Aggregate statistics
-
-## Development
 
 ### AI-Assisted Workflow
 
-This project uses Claude as the Lead Developer and Gemini CLI as a Subject Matter Expert.
+This project uses Claude as Lead Developer and Gemini CLI as Subject Matter Expert.
 
 **To request changes:**
 1. Create a GitHub Issue describing the feature or bug
-2. Claude will analyze the codebase, implement changes, and create a PR
+2. Claude analyzes the codebase and implements changes
 3. Review the PR and provide feedback
-4. Claude will address feedback and update the PR
 
-**Configuration files:**
+**Configuration:**
 - `.claude/CLAUDE.md` - Instructions for Claude
 - `GEMINI.md` - Instructions for Gemini CLI
 - `CODEOWNERS` - Code ownership definitions
 
-### Manual Development
+### CLI/API Alignment Standards
 
-**Testing Lambda locally:**
+The project maintains strict one-to-one correspondence between CLI and API:
+
+1. **One-to-One Mapping**: Every API endpoint has exactly one CLI command
+2. **Argument Alignment**: CLI arguments match API parameters exactly
+3. **JSON Output**: All CLI commands output pretty-printed JSON matching API responses
+4. **Consistent Behavior**: Same input validation, error messages, and response structure
+
+See `.claude/CLAUDE.md` for detailed alignment requirements.
+
+### Local Testing
+
+**Test Lambda locally:**
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -351,145 +518,69 @@ python -c "from app import lambda_handler; print(lambda_handler({'httpMethod': '
 cd terraform/environments/dev
 terragrunt plan
 terragrunt apply
-
-# For non-interactive/CI environments:
-terragrunt init --terragrunt-non-interactive
-terragrunt plan --terragrunt-non-interactive
-terragrunt apply --terragrunt-non-interactive -auto-approve
 ```
 
-## Monitoring and Observability
+## Deployment
 
-The Lambda function uses AWS Lambda Powertools (via AWS-managed Lambda Layer) for:
-- **Structured Logging**: JSON logs with correlation IDs in CloudWatch
-- **X-Ray Tracing**: Distributed tracing across services and API calls
-- **CloudWatch Metrics**: Custom metrics for operations (items created, searches, etc.)
-- **API Gateway Integration**: Automatic request/response logging and error handling
+### Initial Setup
 
-**Lambda Layer Details:**
-- Powertools is provided via an AWS-managed Lambda Layer (see `backend/README.md`)
-- No need to bundle these dependencies with your deployment package
-- AWS maintains the layer with security updates and compatibility fixes
-- Layer ARN is configured in `terraform/modules/main/main.tf`
+1. **Create OIDC Provider in AWS IAM:**
+   - Provider URL: `https://token.actions.githubusercontent.com`
+   - Audience: `sts.amazonaws.com`
 
-View logs and metrics in CloudWatch:
+2. **Create IAM Role** with trust policy for GitHub Actions
+
+3. **Create Remote State Resources:**
+   ```bash
+   # Create S3 bucket for Terraform state
+   aws s3 mb s3://dev-use2-pantry-terraform-state --region us-east-2
+
+   # Enable versioning
+   aws s3api put-bucket-versioning \
+     --bucket dev-use2-pantry-terraform-state \
+     --versioning-configuration Status=Enabled
+
+   # Create DynamoDB table for state locking
+   aws dynamodb create-table \
+     --table-name dev-use2-pantry-terraform-locks \
+     --attribute-definitions AttributeName=LockID,AttributeType=S \
+     --key-schema AttributeName=LockID,KeyType=HASH \
+     --billing-mode PAY_PER_REQUEST \
+     --region us-east-2
+   ```
+
+4. **Deploy via GitHub Actions:**
+   ```bash
+   gh workflow run deploy.yml -f environment=dev
+   ```
+
+## Monitoring
+
+The Lambda function uses AWS Lambda Powertools (via AWS-managed Layer) for:
+- **Structured Logging**: JSON logs with correlation IDs
+- **X-Ray Tracing**: Distributed tracing
+- **CloudWatch Metrics**: Custom metrics for operations
+
+**View logs and metrics:**
 - Log group: `/aws/lambda/dev-use2-pantry-lambda-core-api`
-- Metrics namespace: `pantry-dev`
+- Metrics namespace: `PantryApp`
 - X-Ray traces: AWS X-Ray console
 
 ## Security
 
-- No hardcoded AWS credentials (OIDC authentication)
-- IAM roles follow least privilege principle
-- DynamoDB encryption at rest enabled
-- Point-in-time recovery enabled for prod
-- VPC integration available (currently disabled for cost)
-
-## Cost Optimization
-
-- DynamoDB uses PAY_PER_REQUEST billing (scales to zero)
-- Lambda charged per-invocation (generous free tier)
-- CloudWatch log retention: 7 days (dev), 30 days (prod)
-- No NAT Gateway or VPC costs (Lambda runs in AWS network)
-
-## Troubleshooting
-
-### Terraform/Terragrunt Errors
-
-#### Error: "NoSuchBucketPolicy: The bucket policy does not exist"
-
-**Cause**: The S3 bucket for Terraform state exists but doesn't have a bucket policy configured. Terragrunt expects the bucket to have both versioning enabled and a bucket policy.
-
-**Solution**: Apply the bucket policy using this JSON (adjust bucket name for your environment):
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "EnforcedTLS",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::dev-use2-pantry-terraform-state",
-        "arn:aws:s3:::dev-use2-pantry-terraform-state/*"
-      ],
-      "Condition": {
-        "Bool": {
-          "aws:SecureTransport": "false"
-        }
-      }
-    }
-  ]
-}
-```
-
-Apply it with:
-```bash
-aws s3api put-bucket-policy \
-  --bucket dev-use2-pantry-terraform-state \
-  --policy file://bucket-policy.json \
-  --region us-east-2
-```
-
-Also enable versioning:
-```bash
-aws s3api put-bucket-versioning \
-  --bucket dev-use2-pantry-terraform-state \
-  --versioning-configuration Status=Enabled \
-  --region us-east-2
-```
-
-#### Warning: "Versioning is not enabled for the remote state S3 bucket"
-
-**Cause**: The S3 bucket was created without versioning enabled.
-
-**Solution**: Enable versioning on the bucket:
-```bash
-aws s3api put-bucket-versioning \
-  --bucket dev-use2-pantry-terraform-state \
-  --versioning-configuration Status=Enabled \
-  --region us-east-2
-```
-
-**Why versioning matters**: Versioning allows you to recover previous versions of your Terraform state if something goes wrong. This is critical for state file integrity and disaster recovery.
-
-#### Error: "Remote state S3 bucket is out of date" with EOF error
-
-**Cause**: Terragrunt is trying to prompt for confirmation to update the S3 bucket configuration, but it's running in a non-interactive environment (CI/CD) where it can't get user input.
-
-**Solution**: Add the `--terragrunt-non-interactive` flag to all Terragrunt commands in CI/CD:
-```bash
-terragrunt init --terragrunt-non-interactive
-terragrunt plan --terragrunt-non-interactive
-terragrunt apply --terragrunt-non-interactive -auto-approve
-```
-
-Alternatively, set the environment variable:
-```bash
-export TERRAGRUNT_NON_INTERACTIVE=true
-```
-
-**This has been fixed** in the GitHub Actions workflow ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)).
+- OIDC authentication (no hardcoded credentials)
+- IAM roles with least privilege
+- DynamoDB encryption at rest
+- Point-in-time recovery (prod)
 
 ## Contributing
 
-This project follows an AI-assisted development workflow. To contribute:
-
 1. Create an issue describing your change
-2. Allow Claude to implement and create a PR
-3. Review and provide feedback on the PR
-4. Changes will be iterated until approved
-5. Merge to main triggers automatic deployment
+2. Claude implements and creates a PR
+3. Review and provide feedback
+4. Changes are iterated until approved
+5. Merge triggers automatic deployment
 
 ## License
 
 [Specify your license here]
-
-## Support
-
-For issues or questions:
-- Create a GitHub Issue
-- Tag @sp-loomis for urgent matters
-- Check existing issues for similar problems

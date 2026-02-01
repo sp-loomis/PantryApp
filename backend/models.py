@@ -4,7 +4,7 @@ Data models for the Pantry App.
 
 from dataclasses import dataclass, field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 
@@ -14,8 +14,8 @@ class Location:
     location_id: str
     name: str
     description: str = ""
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
     def create(cls, name: str, description: str = "") -> "Location":
@@ -48,8 +48,8 @@ class Item:
     unit: str = "unit"
     use_by_date: Optional[str] = None
     notes: str = ""
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
     def create(
@@ -94,7 +94,7 @@ class ItemTag:
     """Item-tag relationship model."""
     tag_name: str
     item_id: str
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""

@@ -140,6 +140,9 @@ class ItemService:
         notes: str = ""
     ) -> Dict[str, Any]:
         """Create a new inventory item with optional dimensions."""
+        # Debug logging
+        logger.info(f"create_item called with dimensions: {dimensions}")
+
         # Validate dimensions if provided
         if dimensions:
             for dim in dimensions:
@@ -156,12 +159,13 @@ class ItemService:
             location_id=location_id,
             quantity=Decimal(str(quantity)),
             unit=unit,
-            dimensions=dimensions or [],
+            dimensions=dimensions if dimensions is not None else [],
             use_by_date=use_by_date,
             notes=notes
         )
 
         item_dict = item.to_dict()
+        logger.info(f"Item dict before Decimal conversion: {item_dict}")
         item_dict["quantity"] = Decimal(str(item_dict["quantity"]))
 
         # Convert dimension values to Decimal for DynamoDB
@@ -170,7 +174,9 @@ class ItemService:
                 if "value" in dim:
                     dim["value"] = Decimal(str(dim["value"]))
 
+        logger.info(f"Item dict after Decimal conversion (about to write to DynamoDB): {item_dict}")
         self.items_table.put_item(Item=item_dict)
+        logger.info("Successfully wrote item to DynamoDB")
 
         if tags:
             self.tag_service.add_tags_to_item(item.item_id, tags)

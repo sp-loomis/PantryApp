@@ -129,17 +129,22 @@ def create_item():
     """Create a new inventory item with optional dimensions."""
     try:
         data = app.current_event.json_body
+        logger.info(f"Received request body: {data}")
+        dimensions_from_request = data.get('dimensions', [])
+        logger.info(f"Extracted dimensions: {dimensions_from_request}")
+
         item = item_service.create_item(
             name=data['name'],
             location_id=data['location_id'],
             quantity=data.get('quantity', 1),
             unit=data.get('unit', 'unit'),
-            dimensions=data.get('dimensions', []),
+            dimensions=dimensions_from_request,
             use_by_date=data.get('use_by_date'),
             tags=data.get('tags', []),
             notes=data.get('notes', '')
         )
         metrics.add_metric(name="ItemCreated", unit="Count", value=1)
+        logger.info(f"Created item with dimensions: {item.get('dimensions')}")
         return {"item": item}, 201
     except ValueError as e:
         logger.warning(f"Validation error creating item: {str(e)}")

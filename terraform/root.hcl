@@ -7,9 +7,9 @@ locals {
   region       = "us-east-2"
   region_abbr  = "use2"
 
-  # Parse environment from the path
-  environment_vars = read_terragrunt_config(find_in_parent_folders("globals.hcl"))
-  environment      = local.environment_vars.locals.environment
+  # Parse environment from the directory name (either "dev" or "prod")
+  parsed_path = split("/", get_terragrunt_dir())
+  environment = element(local.parsed_path, length(local.parsed_path) - 1)
 
   # Common naming convention: {environment}-{region}-{project}-{resource_type}-{resource_name}
   name_prefix = "${local.environment}-${local.region_abbr}-${local.project_name}"

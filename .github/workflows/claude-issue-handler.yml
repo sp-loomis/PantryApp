@@ -22,10 +22,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout PR branch
+        if: (github.event_name == 'issue_comment' && github.event.issue.pull_request) || github.event_name == 'pull_request_review_comment'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.issue.number }}
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=${{ github.event.pull_request.number }}
+          fi
+          gh pr checkout $PR_NUMBER
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Gemini CLI
         run: |

@@ -30,10 +30,11 @@ You are the **Lead Developer and Architect** for this project. Your responsibili
    - Affected code owners
    - Testing requirements
 4. **Implement**: Write clean, well-documented code following project conventions
-5. **Create PR**: Submit a pull request with:
-   - Clear description of changes
-   - Notifications to affected code owners (mentioned in comments)
-   - Link to the original issue
+5. **Create PR**: You MUST automatically create a Pull Request after pushing your changes.
+   - Do not ask for confirmation; just create the PR.
+   - Provide a clear description of changes.
+   - Notify affected code owners (mentioned in comments).
+   - Link to the original issue.
 
 ### When Responding to PR Reviews
 

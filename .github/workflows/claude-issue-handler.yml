@@ -29,7 +29,7 @@ jobs:
 
       - name: Install Gemini CLI
         run: |
-          npm install -g @google/generative-ai-cli
+          npm install -g @google/gemini-cli
 
       - name: Run Claude Code Action
         uses: anthropics/claude-code-action@v1

@@ -125,18 +125,91 @@ Set up GitHub OIDC provider in AWS for secure, credential-free deployments:
    - Add `AWS_ROLE_ARN` with the IAM role ARN
 
 #### 2. Create Remote State Resources
-Before deploying, manually create the S3 bucket and DynamoDB table for Terraform state:
+Before deploying, manually create the S3 bucket and DynamoDB table for Terraform state.
+
+**Important**: Terragrunt requires the S3 bucket to have versioning enabled and a bucket policy configured. Follow these steps:
 
 ```bash
 # For dev environment
-aws s3 mb s3://dev-use2-pantry-terraform-state --region us-east-2
+BUCKET_NAME="dev-use2-pantry-terraform-state"
+REGION="us-east-2"
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# 1. Create the S3 bucket
+aws s3 mb s3://${BUCKET_NAME} --region ${REGION}
+
+# 2. Enable versioning (required by Terragrunt)
+aws s3api put-bucket-versioning \
+  --bucket ${BUCKET_NAME} \
+  --versioning-configuration Status=Enabled \
+  --region ${REGION}
+
+# 3. Enable server-side encryption
+aws s3api put-bucket-encryption \
+  --bucket ${BUCKET_NAME} \
+  --server-side-encryption-configuration '{
+    "Rules": [{
+      "ApplyServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+      },
+      "BucketKeyEnabled": false
+    }]
+  }' \
+  --region ${REGION}
+
+# 4. Block public access (security best practice)
+aws s3api put-public-access-block \
+  --bucket ${BUCKET_NAME} \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" \
+  --region ${REGION}
+
+# 5. Add bucket policy (required by Terragrunt)
+aws s3api put-bucket-policy \
+  --bucket ${BUCKET_NAME} \
+  --policy "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [
+      {
+        \"Sid\": \"EnforcedTLS\",
+        \"Effect\": \"Deny\",
+        \"Principal\": \"*\",
+        \"Action\": \"s3:*\",
+        \"Resource\": [
+          \"arn:aws:s3:::${BUCKET_NAME}\",
+          \"arn:aws:s3:::${BUCKET_NAME}/*\"
+        ],
+        \"Condition\": {
+          \"Bool\": {
+            \"aws:SecureTransport\": \"false\"
+          }
+        }
+      }
+    ]
+  }" \
+  --region ${REGION}
+
+# 6. Create DynamoDB table for state locking
 aws dynamodb create-table \
   --table-name dev-use2-pantry-terraform-locks \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
   --key-schema AttributeName=LockID,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST \
-  --region us-east-2
+  --region ${REGION}
 ```
+
+**For prod environment**, repeat the above steps with:
+```bash
+BUCKET_NAME="prod-use2-pantry-terraform-state"
+# ... (same commands with prod bucket name)
+```
+
+**What these commands do:**
+- **Versioning**: Allows you to roll back to previous Terraform state versions if needed
+- **Encryption**: Ensures state files are encrypted at rest
+- **Public Access Block**: Prevents accidental public exposure of state files
+- **Bucket Policy**: Enforces TLS/HTTPS for all connections (security requirement)
+- **DynamoDB Table**: Provides state locking to prevent concurrent modifications
 
 #### 3. Deploy Infrastructure
 Push changes to trigger deployment or manually run:
@@ -307,6 +380,32 @@ View logs and metrics in CloudWatch:
 - Lambda charged per-invocation (generous free tier)
 - CloudWatch log retention: 7 days (dev), 30 days (prod)
 - No NAT Gateway or VPC costs (Lambda runs in AWS network)
+
+## Troubleshooting
+
+### Terraform/Terragrunt Errors
+
+#### Error: "NoSuchBucketPolicy: The bucket policy does not exist"
+
+**Cause**: The S3 bucket for Terraform state exists but doesn't have a bucket policy configured. Terragrunt expects the bucket to have both versioning enabled and a bucket policy.
+
+**Solution**: Apply the complete S3 bucket configuration from the setup instructions above. Specifically, you need to:
+1. Enable versioning: `aws s3api put-bucket-versioning --bucket <bucket-name> --versioning-configuration Status=Enabled`
+2. Add bucket policy: `aws s3api put-bucket-policy --bucket <bucket-name> --policy '...'` (see full command in setup section)
+
+#### Warning: "Versioning is not enabled for the remote state S3 bucket"
+
+**Cause**: The S3 bucket was created without versioning enabled.
+
+**Solution**: Enable versioning on the bucket:
+```bash
+aws s3api put-bucket-versioning \
+  --bucket dev-use2-pantry-terraform-state \
+  --versioning-configuration Status=Enabled \
+  --region us-east-2
+```
+
+**Why versioning matters**: Versioning allows you to recover previous versions of your Terraform state if something goes wrong. This is critical for state file integrity and disaster recovery.
 
 ## Contributing
 

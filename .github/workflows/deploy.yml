@@ -1,0 +1,78 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  id-token: write # Required for OIDC authentication
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-PantryApp
+          aws-region: us-east-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v0.54.0/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Install Python dependencies for Lambda
+        run: |
+          cd backend
+          pip install -r requirements.txt -t .
+          cd ..
+
+      - name: Terragrunt Init
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terragrunt init
+
+      - name: Terragrunt Plan
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terragrunt plan -out=tfplan
+
+      - name: Terragrunt Apply
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: terragrunt apply -auto-approve tfplan
+
+      - name: Get outputs
+        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          echo "Lambda Function: $(terragrunt output -raw lambda_function_name)"
+          echo "Items Table: $(terragrunt output -raw items_table_name)"
+          echo "Locations Table: $(terragrunt output -raw locations_table_name)"

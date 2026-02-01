@@ -49,5 +49,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: "dev"
+          claude_args: "--verbose"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

@@ -219,13 +219,20 @@ def item():
 @item.command(name='add')
 @click.option('--name', required=True, help='Item name')
 @click.option('--location', required=True, help='Location ID')
-@click.option('--quantity', type=float, default=1.0, help='Quantity')
-@click.option('--unit', default='unit', help='Unit of measurement')
+@click.option('--quantity', type=float, default=1.0, help='Quantity (legacy)')
+@click.option('--unit', default='unit', help='Unit of measurement (legacy)')
+@click.option('--count', type=float, help='Count dimension value')
+@click.option('--weight', type=float, help='Weight dimension value')
+@click.option('--weight-unit', default='lb', help='Weight unit (g, kg, oz, lb)')
+@click.option('--volume', type=float, help='Volume dimension value')
+@click.option('--volume-unit', default='cup', help='Volume unit (ml, l, tsp, tbsp, fl oz, cup, pint, quart, gallon)')
 @click.option('--use-by', help='Use-by date (YYYY-MM-DD)')
 @click.option('--tags', help='Comma-separated tags')
 @click.option('--notes', default='', help='Additional notes')
-def add_item(name: str, location: str, quantity: float, unit: str, use_by: Optional[str], tags: Optional[str], notes: str):
-    """Add a new inventory item."""
+def add_item(name: str, location: str, quantity: float, unit: str, count: Optional[float],
+             weight: Optional[float], weight_unit: str, volume: Optional[float], volume_unit: str,
+             use_by: Optional[str], tags: Optional[str], notes: str):
+    """Add a new inventory item with optional dimensions."""
     item_data = {
         'name': name,
         'location_id': location,
@@ -233,6 +240,30 @@ def add_item(name: str, location: str, quantity: float, unit: str, use_by: Optio
         'unit': unit,
         'notes': notes
     }
+
+    # Build dimensions array
+    dimensions = []
+    if count is not None:
+        dimensions.append({
+            'dimension_type': 'count',
+            'value': count,
+            'unit': 'units'
+        })
+    if weight is not None:
+        dimensions.append({
+            'dimension_type': 'weight',
+            'value': weight,
+            'unit': weight_unit
+        })
+    if volume is not None:
+        dimensions.append({
+            'dimension_type': 'volume',
+            'value': volume,
+            'unit': volume_unit
+        })
+
+    if dimensions:
+        item_data['dimensions'] = dimensions
 
     if use_by:
         try:
@@ -258,11 +289,21 @@ def add_item(name: str, location: str, quantity: float, unit: str, use_by: Optio
         sys.exit(1)
 
     item = result['item']
+
+    # Format dimensions for display
+    dimensions_text = ""
+    if item.get('dimensions'):
+        dimensions_text = "\nDimensions:\n"
+        for dim in item['dimensions']:
+            dim_type = dim['dimension_type'].capitalize()
+            dimensions_text += f"  {dim_type}: {dim['value']} {dim['unit']}\n"
+
     console.print(Panel(
         f"[green]Item added successfully![/green]\n\n"
         f"ID: {item['item_id']}\n"
         f"Name: {item['name']}\n"
-        f"Quantity: {item['quantity']} {item['unit']}\n"
+        f"Quantity: {item['quantity']} {item['unit']}" +
+        dimensions_text +
         f"Location: {item['location_id']}\n" +
         (f"Use by: {item['use_by_date']}\n" if item.get('use_by_date') else ""),
         title="New Item"
@@ -299,15 +340,26 @@ def list_items(location: Optional[str], tag: Optional[str], name: Optional[str])
     table.add_column("ID", style="cyan")
     table.add_column("Name", style="green")
     table.add_column("Quantity", style="yellow")
+    table.add_column("Dimensions", style="magenta")
     table.add_column("Location", style="blue")
     table.add_column("Use By", style="red")
-    table.add_column("Tags", style="magenta")
+    table.add_column("Tags", style="white")
 
     for item in items:
+        # Format dimensions for compact display
+        dimensions_str = ""
+        if item.get('dimensions'):
+            dim_parts = []
+            for dim in item['dimensions']:
+                dim_type_short = dim['dimension_type'][0].upper()  # C, W, or V
+                dim_parts.append(f"{dim_type_short}:{dim['value']}{dim['unit']}")
+            dimensions_str = " ".join(dim_parts)
+
         table.add_row(
             item['item_id'][:8] + '...',
             item['name'],
             f"{item['quantity']} {item['unit']}",
+            dimensions_str,
             item['location_id'][:8] + '...',
             item.get('use_by_date', 'N/A')[:10] if item.get('use_by_date') else 'N/A',
             ', '.join(item.get('tags', []))
@@ -327,10 +379,20 @@ def get_item(item_id: str):
         sys.exit(1)
 
     item = result['item']
+
+    # Format dimensions for display
+    dimensions_text = ""
+    if item.get('dimensions'):
+        dimensions_text = "Dimensions:\n"
+        for dim in item['dimensions']:
+            dim_type = dim['dimension_type'].capitalize()
+            dimensions_text += f"  {dim_type}: {dim['value']} {dim['unit']}\n"
+
     console.print(Panel(
         f"ID: {item['item_id']}\n"
         f"Name: {item['name']}\n"
-        f"Quantity: {item['quantity']} {item['unit']}\n"
+        f"Quantity: {item['quantity']} {item['unit']}\n" +
+        (dimensions_text if dimensions_text else "") +
         f"Location: {item['location_id']}\n"
         f"Use by: {item.get('use_by_date', 'N/A')}\n"
         f"Tags: {', '.join(item.get('tags', []))}\n"
@@ -345,14 +407,21 @@ def get_item(item_id: str):
 @click.argument('item_id')
 @click.option('--name', help='New item name')
 @click.option('--location', help='New location ID')
-@click.option('--quantity', type=float, help='New quantity')
-@click.option('--unit', help='New unit')
+@click.option('--quantity', type=float, help='New quantity (legacy)')
+@click.option('--unit', help='New unit (legacy)')
+@click.option('--count', type=float, help='Count dimension value')
+@click.option('--weight', type=float, help='Weight dimension value')
+@click.option('--weight-unit', help='Weight unit (g, kg, oz, lb)')
+@click.option('--volume', type=float, help='Volume dimension value')
+@click.option('--volume-unit', help='Volume unit (ml, l, tsp, tbsp, fl oz, cup, pint, quart, gallon)')
 @click.option('--use-by', help='New use-by date (YYYY-MM-DD)')
 @click.option('--tags', help='New comma-separated tags')
 @click.option('--notes', help='New notes')
 def update_item(item_id: str, name: Optional[str], location: Optional[str], quantity: Optional[float],
-                unit: Optional[str], use_by: Optional[str], tags: Optional[str], notes: Optional[str]):
-    """Update an inventory item."""
+                unit: Optional[str], count: Optional[float], weight: Optional[float], weight_unit: Optional[str],
+                volume: Optional[float], volume_unit: Optional[str], use_by: Optional[str],
+                tags: Optional[str], notes: Optional[str]):
+    """Update an inventory item, including dimensions."""
     updates = {}
 
     if name:
@@ -363,6 +432,31 @@ def update_item(item_id: str, name: Optional[str], location: Optional[str], quan
         updates['quantity'] = quantity
     if unit:
         updates['unit'] = unit
+
+    # Build dimensions array if any dimension option is provided
+    has_dimension_update = count is not None or weight is not None or volume is not None
+    if has_dimension_update:
+        dimensions = []
+        if count is not None:
+            dimensions.append({
+                'dimension_type': 'count',
+                'value': count,
+                'unit': 'units'
+            })
+        if weight is not None:
+            dimensions.append({
+                'dimension_type': 'weight',
+                'value': weight,
+                'unit': weight_unit or 'lb'
+            })
+        if volume is not None:
+            dimensions.append({
+                'dimension_type': 'volume',
+                'value': volume,
+                'unit': volume_unit or 'cup'
+            })
+        updates['dimensions'] = dimensions
+
     if use_by:
         try:
             parsed_date = parse_date(use_by)
@@ -426,13 +520,24 @@ def expiring_items(location: Optional[str], days: int):
     table = Table(title=f"Items Expiring in {days} Days")
     table.add_column("Name", style="green")
     table.add_column("Quantity", style="yellow")
+    table.add_column("Dimensions", style="magenta")
     table.add_column("Location", style="blue")
     table.add_column("Use By", style="red")
 
     for item in items:
+        # Format dimensions for compact display
+        dimensions_str = ""
+        if item.get('dimensions'):
+            dim_parts = []
+            for dim in item['dimensions']:
+                dim_type_short = dim['dimension_type'][0].upper()
+                dim_parts.append(f"{dim_type_short}:{dim['value']}{dim['unit']}")
+            dimensions_str = " ".join(dim_parts)
+
         table.add_row(
             item['name'],
             f"{item['quantity']} {item['unit']}",
+            dimensions_str,
             item['location_id'][:8] + '...',
             item.get('use_by_date', 'N/A')[:10]
         )
@@ -481,14 +586,25 @@ def search_items(name: Optional[str], location: Optional[str], tags: Optional[st
     table = Table(title="Search Results")
     table.add_column("Name", style="green")
     table.add_column("Quantity", style="yellow")
+    table.add_column("Dimensions", style="magenta")
     table.add_column("Location", style="blue")
     table.add_column("Use By", style="red")
-    table.add_column("Tags", style="magenta")
+    table.add_column("Tags", style="white")
 
     for item in items:
+        # Format dimensions for compact display
+        dimensions_str = ""
+        if item.get('dimensions'):
+            dim_parts = []
+            for dim in item['dimensions']:
+                dim_type_short = dim['dimension_type'][0].upper()
+                dim_parts.append(f"{dim_type_short}:{dim['value']}{dim['unit']}")
+            dimensions_str = " ".join(dim_parts)
+
         table.add_row(
             item['name'],
             f"{item['quantity']} {item['unit']}",
+            dimensions_str,
             item['location_id'][:8] + '...',
             item.get('use_by_date', 'N/A')[:10] if item.get('use_by_date') else 'N/A',
             ', '.join(item.get('tags', []))
@@ -500,13 +616,19 @@ def search_items(name: Optional[str], location: Optional[str], tags: Optional[st
 @cli.command(name='stats')
 @click.option('--location', help='Filter by location ID')
 @click.option('--tag', help='Filter by tag')
-def aggregate_stats(location: Optional[str], tag: Optional[str]):
-    """Show aggregate statistics for inventory."""
+@click.option('--weight-unit', help='Preferred weight unit (g, kg, oz, lb)')
+@click.option('--volume-unit', help='Preferred volume unit (ml, l, tsp, tbsp, fl oz, cup, pint, quart, gallon)')
+def aggregate_stats(location: Optional[str], tag: Optional[str], weight_unit: Optional[str], volume_unit: Optional[str]):
+    """Show aggregate statistics for inventory with dimension support."""
     query_params = {}
     if location:
         query_params['location_id'] = location
     if tag:
         query_params['tag'] = tag
+    if weight_unit:
+        query_params['weight_unit'] = weight_unit
+    if volume_unit:
+        query_params['volume_unit'] = volume_unit
 
     result = invoke_lambda('GET', '/aggregate', query_params=query_params)
 
@@ -526,8 +648,22 @@ def aggregate_stats(location: Optional[str], tag: Optional[str]):
 
     console.print(table)
 
-    if stats['quantities_by_unit']:
-        unit_table = Table(title="Quantities by Unit")
+    # Display aggregated dimensions
+    if stats.get('aggregated_dimensions'):
+        dim_table = Table(title="Aggregated Dimensions")
+        dim_table.add_column("Dimension Type", style="cyan")
+        dim_table.add_column("Total", style="yellow")
+
+        for dim_type, dim_data in stats['aggregated_dimensions'].items():
+            dim_type_display = dim_type.capitalize()
+            value_display = f"{dim_data['value']:.2f} {dim_data['unit']}"
+            dim_table.add_row(dim_type_display, value_display)
+
+        console.print(dim_table)
+
+    # Display legacy quantities by unit
+    if stats.get('quantities_by_unit'):
+        unit_table = Table(title="Quantities by Unit (Legacy)")
         unit_table.add_column("Unit", style="green")
         unit_table.add_column("Total Quantity", style="yellow")
 

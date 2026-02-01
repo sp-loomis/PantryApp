@@ -126,7 +126,7 @@ def delete_location(location_id: str):
 @app.post("/items")
 @tracer.capture_method
 def create_item():
-    """Create a new inventory item."""
+    """Create a new inventory item with optional dimensions."""
     try:
         data = app.current_event.json_body
         item = item_service.create_item(
@@ -134,12 +134,16 @@ def create_item():
             location_id=data['location_id'],
             quantity=data.get('quantity', 1),
             unit=data.get('unit', 'unit'),
+            dimensions=data.get('dimensions', []),
             use_by_date=data.get('use_by_date'),
             tags=data.get('tags', []),
             notes=data.get('notes', '')
         )
         metrics.add_metric(name="ItemCreated", unit="Count", value=1)
         return {"item": item}, 201
+    except ValueError as e:
+        logger.warning(f"Validation error creating item: {str(e)}")
+        return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error creating item")
         metrics.add_metric(name="ItemCreationError", unit="Count", value=1)
@@ -189,7 +193,7 @@ def get_item(item_id: str):
 @app.put("/items/<item_id>")
 @tracer.capture_method
 def update_item(item_id: str):
-    """Update an inventory item."""
+    """Update an inventory item, including dimensions."""
     try:
         data = app.current_event.json_body
         item = item_service.update_item(item_id, data)
@@ -197,6 +201,9 @@ def update_item(item_id: str):
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemUpdated", unit="Count", value=1)
         return {"item": item}
+    except ValueError as e:
+        logger.warning(f"Validation error updating item: {str(e)}")
+        return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error updating item")
         return {"error": str(e)}, 500
@@ -259,13 +266,21 @@ def search_items():
 @app.get("/aggregate")
 @tracer.capture_method
 def get_aggregate_stats():
-    """Get aggregate statistics for inventory."""
+    """Get aggregate statistics for inventory with dimension support."""
     try:
         query_params = app.current_event.query_string_parameters or {}
         location_id = query_params.get('location_id')
         tag = query_params.get('tag')
 
-        stats = item_service.get_aggregate_stats(location_id, tag)
+        # Parse requested units from query params
+        # Format: ?weight_unit=kg&volume_unit=gallon
+        requested_units = {}
+        if query_params.get('weight_unit'):
+            requested_units['weight'] = query_params['weight_unit']
+        if query_params.get('volume_unit'):
+            requested_units['volume'] = query_params['volume_unit']
+
+        stats = item_service.get_aggregate_stats(location_id, tag, requested_units or None)
         return {"stats": stats}
     except Exception as e:
         logger.exception("Error getting aggregate stats")

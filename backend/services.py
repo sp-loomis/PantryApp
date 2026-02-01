@@ -11,6 +11,9 @@ from boto3.dynamodb.conditions import Key, Attr
 from aws_lambda_powertools import Logger
 
 from models import Item, Location, ItemTag
+from dimensions import (
+    Dimension, DimensionType, validate_dimension, aggregate_dimensions
+)
 
 logger = Logger(child=True)
 
@@ -131,16 +134,29 @@ class ItemService:
         location_id: str,
         quantity: float = 1.0,
         unit: str = "unit",
+        dimensions: List[Dict[str, Any]] = None,
         use_by_date: Optional[str] = None,
         tags: List[str] = None,
         notes: str = ""
     ) -> Dict[str, Any]:
-        """Create a new inventory item."""
+        """Create a new inventory item with optional dimensions."""
+        # Validate dimensions if provided
+        if dimensions:
+            for dim in dimensions:
+                if not validate_dimension(dim.get("dimension_type"), dim.get("unit")):
+                    raise ValueError(f"Invalid dimension: {dim}")
+
+            # Ensure no duplicate dimension types
+            dim_types = [d.get("dimension_type") for d in dimensions]
+            if len(dim_types) != len(set(dim_types)):
+                raise ValueError("Duplicate dimension types not allowed")
+
         item = Item.create(
             name=name,
             location_id=location_id,
             quantity=Decimal(str(quantity)),
             unit=unit,
+            dimensions=dimensions or [],
             use_by_date=use_by_date,
             notes=notes
         )
@@ -253,7 +269,7 @@ class ItemService:
         return items
 
     def update_item(self, item_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Update an item."""
+        """Update an item, including dimensions."""
         item = self.get_item(item_id)
         if not item:
             return None
@@ -280,6 +296,21 @@ class ItemService:
             update_expr += ", #u = :unit"
             expr_values[":unit"] = updates["unit"]
             expr_names["#u"] = "unit"
+
+        if "dimensions" in updates:
+            # Validate dimensions
+            dimensions = updates["dimensions"]
+            for dim in dimensions:
+                if not validate_dimension(dim.get("dimension_type"), dim.get("unit")):
+                    raise ValueError(f"Invalid dimension: {dim}")
+
+            # Ensure no duplicate dimension types
+            dim_types = [d.get("dimension_type") for d in dimensions]
+            if len(dim_types) != len(set(dim_types)):
+                raise ValueError("Duplicate dimension types not allowed")
+
+            update_expr += ", dimensions = :dimensions"
+            expr_values[":dimensions"] = dimensions
 
         if "use_by_date" in updates:
             update_expr += ", use_by_date = :use_by_date"
@@ -383,8 +414,21 @@ class ItemService:
 
         return items
 
-    def get_aggregate_stats(self, location_id: Optional[str] = None, tag: Optional[str] = None) -> Dict[str, Any]:
-        """Get aggregate statistics for inventory."""
+    def get_aggregate_stats(
+        self,
+        location_id: Optional[str] = None,
+        tag: Optional[str] = None,
+        requested_units: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Get aggregate statistics for inventory with dimension support.
+
+        Args:
+            location_id: Filter by location
+            tag: Filter by tag
+            requested_units: Optional dict mapping dimension type to desired unit
+                            e.g., {"weight": "kg", "volume": "gallon"}
+        """
         if location_id:
             items = self.get_items_by_location(location_id)
         elif tag:
@@ -396,16 +440,37 @@ class ItemService:
         total_quantity = sum(item.get("quantity", 0) for item in items)
         items_with_expiry = sum(1 for item in items if item.get("use_by_date"))
 
-        # Group by unit
+        # Legacy: Group by unit
         quantities_by_unit = {}
         for item in items:
             unit = item.get("unit", "unit")
             quantity = item.get("quantity", 0)
             quantities_by_unit[unit] = quantities_by_unit.get(unit, 0) + quantity
 
+        # New: Aggregate dimensions
+        aggregated_dimensions = aggregate_dimensions(items)
+
+        # Convert to requested units if specified
+        if requested_units:
+            for dim_type_str, target_unit in requested_units.items():
+                if dim_type_str in aggregated_dimensions:
+                    dim = aggregated_dimensions[dim_type_str]
+                    base_value = dim.to_base_unit()
+                    dim_type = DimensionType(dim_type_str)
+                    aggregated_dimensions[dim_type_str] = Dimension.from_base_unit(
+                        dim_type, base_value, target_unit
+                    )
+
+        # Convert dimensions to dict format
+        dimensions_dict = {
+            dim_type: dim.to_dict()
+            for dim_type, dim in aggregated_dimensions.items()
+        }
+
         return {
             "total_items": total_items,
             "total_quantity": total_quantity,
             "items_with_expiry": items_with_expiry,
-            "quantities_by_unit": quantities_by_unit
+            "quantities_by_unit": quantities_by_unit,
+            "aggregated_dimensions": dimensions_dict
         }

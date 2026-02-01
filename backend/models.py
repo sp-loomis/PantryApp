@@ -3,7 +3,7 @@ Data models for the Pantry App.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import uuid
 
@@ -39,13 +39,16 @@ class Location:
 
 @dataclass
 class Item:
-    """Inventory item model."""
+    """Inventory item model with support for multiple dimensions."""
     item_id: str
     name: str
     location_id: str
     item_name: str  # Normalized name for searching
+    # Legacy fields for backward compatibility
     quantity: float = 1.0
     unit: str = "unit"
+    # New dimension support
+    dimensions: List[Dict[str, Any]] = field(default_factory=list)
     use_by_date: Optional[str] = None
     notes: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -58,6 +61,7 @@ class Item:
         location_id: str,
         quantity: float = 1.0,
         unit: str = "unit",
+        dimensions: List[Dict[str, Any]] = None,
         use_by_date: Optional[str] = None,
         notes: str = ""
     ) -> "Item":
@@ -69,13 +73,14 @@ class Item:
             item_name=name.lower(),  # Normalized for searching
             quantity=quantity,
             unit=unit,
+            dimensions=dimensions or [],
             use_by_date=use_by_date,
             notes=notes
         )
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
-        return {
+        result = {
             "item_id": self.item_id,
             "name": self.name,
             "location_id": self.location_id,
@@ -87,6 +92,9 @@ class Item:
             "created_at": self.created_at,
             "updated_at": self.updated_at
         }
+        if self.dimensions:
+            result["dimensions"] = self.dimensions
+        return result
 
 
 @dataclass

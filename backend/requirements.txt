@@ -1,0 +1,2 @@
+# aws-lambda-powertools is provided via AWS Lambda Layer (see terraform/modules/main/main.tf)
+# boto3 is already available in the Lambda runtime environment

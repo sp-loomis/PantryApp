@@ -61,3 +61,47 @@ You have access to the entire codebase at once, which allows you to:
 ---
 
 Your job is to be the expert on **what is**, while Claude's job is to build **what should be**. Work together to help Claude make informed decisions.
+
+---
+
+## Project Context: Pantry App
+
+### What This Codebase Is
+The Pantry App is an inventory management system for tracking items across multiple storage locations. It consists of:
+
+1. **Backend API** (backend/): AWS Lambda function using Lambda Powertools
+   - Main handler: `app.py`
+   - Data models: `models.py` (Item, Location, ItemTag)
+   - Business logic: `services.py` (ItemService, LocationService, TagService)
+
+2. **Frontend CLI** (frontend/cli/): Python command-line interface
+   - Main CLI: `pantry_cli.py` using Click and Rich libraries
+   - Commands for locations, items, search, and statistics
+
+3. **Infrastructure** (terraform/): Terragrunt/Terraform IaC
+   - Modules for DynamoDB tables, Lambda functions, IAM roles
+   - Environments: dev and prod
+   - Region: us-east-2
+
+### Database Architecture
+- **Items Table**: Stores inventory items with location, quantity, expiration dates
+  - GSIs for querying by location, expiration date, and name
+- **Locations Table**: Stores storage location metadata
+- **Item-Tags Table**: Many-to-many relationship between items and tags
+  - Allows flexible tagging and tag-based search
+
+### Common Queries You Might Receive
+```
+"@backend/ How is item searching implemented?"
+"@terraform/ What DynamoDB tables are defined?"
+"@frontend/cli/ Show me how the CLI handles item creation"
+"@backend/services.py Explain the ItemService class"
+"@terraform/modules/ What reusable modules exist?"
+```
+
+### Key Patterns and Conventions
+- **Naming**: `{env}-{region}-{project}-{resource_type}-{resource_name}`
+- **Lambda Powertools**: Used for structured logging, tracing, metrics
+- **DynamoDB**: Single-table design with GSIs for different access patterns
+- **CLI**: Click for commands, Rich for formatted output
+- **IaC**: Terragrunt for DRY configuration, Terraform for resources

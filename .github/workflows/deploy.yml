@@ -50,19 +50,19 @@ jobs:
 
       - name: Terragrunt Init
         working-directory: terraform/environments/${{ github.ref_name }}
-        run: terragrunt init
+        run: terragrunt init --terragrunt-non-interactive
 
       - name: Terragrunt Plan
         working-directory: terraform/environments/${{ github.ref_name }}
-        run: terragrunt plan -out=tfplan
+        run: terragrunt plan --terragrunt-non-interactive -out=tfplan
 
       - name: Terragrunt Apply
         working-directory: terraform/environments/${{ github.ref_name }}
-        run: terragrunt apply -auto-approve tfplan
+        run: terragrunt apply --terragrunt-non-interactive -auto-approve tfplan
 
       - name: Get outputs
         working-directory: terraform/environments/${{ github.ref_name }}
         run: |
-          echo "Lambda Function: $(terragrunt output -raw lambda_function_name)"
-          echo "Items Table: $(terragrunt output -raw items_table_name)"
-          echo "Locations Table: $(terragrunt output -raw locations_table_name)"
+          echo "Lambda Function: $(terragrunt output --terragrunt-non-interactive -raw lambda_function_name)"
+          echo "Items Table: $(terragrunt output --terragrunt-non-interactive -raw items_table_name)"
+          echo "Locations Table: $(terragrunt output --terragrunt-non-interactive -raw locations_table_name)"

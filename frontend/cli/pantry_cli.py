@@ -293,7 +293,7 @@ def add_item(name: str, location: str, quantity: float, unit: str, count: Option
     # Format dimensions for display
     dimensions_text = ""
     if item.get('dimensions'):
-        dimensions_text = "\nDimensions:\n"
+        dimensions_text = "Dimensions:\n"
         for dim in item['dimensions']:
             dim_type = dim['dimension_type'].capitalize()
             dimensions_text += f"  {dim_type}: {dim['value']} {dim['unit']}\n"
@@ -302,7 +302,7 @@ def add_item(name: str, location: str, quantity: float, unit: str, count: Option
         f"[green]Item added successfully![/green]\n\n"
         f"ID: {item['item_id']}\n"
         f"Name: {item['name']}\n"
-        f"Quantity: {item['quantity']} {item['unit']}" +
+        f"Quantity: {item['quantity']} {item['unit']}\n" +
         dimensions_text +
         f"Location: {item['location_id']}\n" +
         (f"Use by: {item['use_by_date']}\n" if item.get('use_by_date') else ""),
@@ -392,7 +392,7 @@ def get_item(item_id: str):
         f"ID: {item['item_id']}\n"
         f"Name: {item['name']}\n"
         f"Quantity: {item['quantity']} {item['unit']}\n" +
-        (dimensions_text if dimensions_text else "") +
+        dimensions_text +
         f"Location: {item['location_id']}\n"
         f"Use by: {item.get('use_by_date', 'N/A')}\n"
         f"Tags: {', '.join(item.get('tags', []))}\n"

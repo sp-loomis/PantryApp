@@ -163,6 +163,13 @@ class ItemService:
 
         item_dict = item.to_dict()
         item_dict["quantity"] = Decimal(str(item_dict["quantity"]))
+
+        # Convert dimension values to Decimal for DynamoDB
+        if "dimensions" in item_dict and item_dict["dimensions"]:
+            for dim in item_dict["dimensions"]:
+                if "value" in dim:
+                    dim["value"] = Decimal(str(dim["value"]))
+
         self.items_table.put_item(Item=item_dict)
 
         if tags:
@@ -186,6 +193,12 @@ class ItemService:
         if "quantity" in item:
             item["quantity"] = float(item["quantity"])
 
+        # Convert dimension values from Decimal to float
+        if "dimensions" in item and item["dimensions"]:
+            for dim in item["dimensions"]:
+                if "value" in dim:
+                    dim["value"] = float(dim["value"])
+
         # Add tags
         item["tags"] = self.tag_service.get_tags_for_item(item_id)
         return item
@@ -199,6 +212,11 @@ class ItemService:
         for item in items:
             if "quantity" in item:
                 item["quantity"] = float(item["quantity"])
+            # Convert dimension values from Decimal to float
+            if "dimensions" in item and item["dimensions"]:
+                for dim in item["dimensions"]:
+                    if "value" in dim:
+                        dim["value"] = float(dim["value"])
             item["tags"] = self.tag_service.get_tags_for_item(item["item_id"])
 
         return items
@@ -214,6 +232,11 @@ class ItemService:
         for item in items:
             if "quantity" in item:
                 item["quantity"] = float(item["quantity"])
+            # Convert dimension values from Decimal to float
+            if "dimensions" in item and item["dimensions"]:
+                for dim in item["dimensions"]:
+                    if "value" in dim:
+                        dim["value"] = float(dim["value"])
             item["tags"] = self.tag_service.get_tags_for_item(item["item_id"])
 
         return items
@@ -241,6 +264,11 @@ class ItemService:
         for item in items:
             if "quantity" in item:
                 item["quantity"] = float(item["quantity"])
+            # Convert dimension values from Decimal to float
+            if "dimensions" in item and item["dimensions"]:
+                for dim in item["dimensions"]:
+                    if "value" in dim:
+                        dim["value"] = float(dim["value"])
             item["tags"] = self.tag_service.get_tags_for_item(item["item_id"])
 
         return items
@@ -264,6 +292,11 @@ class ItemService:
         for item in items:
             if "quantity" in item:
                 item["quantity"] = float(item["quantity"])
+            # Convert dimension values from Decimal to float
+            if "dimensions" in item and item["dimensions"]:
+                for dim in item["dimensions"]:
+                    if "value" in dim:
+                        dim["value"] = float(dim["value"])
             item["tags"] = self.tag_service.get_tags_for_item(item["item_id"])
 
         return items
@@ -309,6 +342,11 @@ class ItemService:
             if len(dim_types) != len(set(dim_types)):
                 raise ValueError("Duplicate dimension types not allowed")
 
+            # Convert dimension values to Decimal for DynamoDB
+            for dim in dimensions:
+                if "value" in dim:
+                    dim["value"] = Decimal(str(dim["value"]))
+
             update_expr += ", dimensions = :dimensions"
             expr_values[":dimensions"] = dimensions
 
@@ -346,6 +384,11 @@ class ItemService:
 
         if updated_item and "quantity" in updated_item:
             updated_item["quantity"] = float(updated_item["quantity"])
+        # Convert dimension values from Decimal to float
+        if updated_item and "dimensions" in updated_item and updated_item["dimensions"]:
+            for dim in updated_item["dimensions"]:
+                if "value" in dim:
+                    dim["value"] = float(dim["value"])
         updated_item["tags"] = self.tag_service.get_tags_for_item(item_id)
 
         return updated_item

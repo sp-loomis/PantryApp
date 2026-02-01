@@ -23,7 +23,7 @@ locals {
 
 # Main infrastructure for dev environment
 terraform {
-  source = "../../modules//main"
+  source = "../../..//terraform/modules/main"
 }
 
 inputs = {

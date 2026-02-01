@@ -351,6 +351,11 @@ python -c "from app import lambda_handler; print(lambda_handler({'httpMethod': '
 cd terraform/environments/dev
 terragrunt plan
 terragrunt apply
+
+# For non-interactive/CI environments:
+terragrunt init --terragrunt-non-interactive
+terragrunt plan --terragrunt-non-interactive
+terragrunt apply --terragrunt-non-interactive -auto-approve
 ```
 
 ## Monitoring and Observability
@@ -449,6 +454,24 @@ aws s3api put-bucket-versioning \
 ```
 
 **Why versioning matters**: Versioning allows you to recover previous versions of your Terraform state if something goes wrong. This is critical for state file integrity and disaster recovery.
+
+#### Error: "Remote state S3 bucket is out of date" with EOF error
+
+**Cause**: Terragrunt is trying to prompt for confirmation to update the S3 bucket configuration, but it's running in a non-interactive environment (CI/CD) where it can't get user input.
+
+**Solution**: Add the `--terragrunt-non-interactive` flag to all Terragrunt commands in CI/CD:
+```bash
+terragrunt init --terragrunt-non-interactive
+terragrunt plan --terragrunt-non-interactive
+terragrunt apply --terragrunt-non-interactive -auto-approve
+```
+
+Alternatively, set the environment variable:
+```bash
+export TERRAGRUNT_NON_INTERACTIVE=true
+```
+
+**This has been fixed** in the GitHub Actions workflow ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)).
 
 ## Contributing
 

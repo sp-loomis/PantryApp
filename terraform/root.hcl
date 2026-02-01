@@ -7,9 +7,13 @@ locals {
   region       = "us-east-2"
   region_abbr  = "use2"
 
-  # Parse environment from the directory name (either "dev" or "prod")
-  parsed_path = split("/", get_terragrunt_dir())
-  environment = element(local.parsed_path, length(local.parsed_path) - 1)
+  # Parse environment from the directory structure
+  # The terragrunt.hcl files are in terraform/environments/{env}/
+  # Use path_relative_to_include() to get the relative path from root.hcl
+  # This will be "environments/dev" or "environments/prod"
+  relative_path = path_relative_to_include()
+  parsed_path   = split("/", local.relative_path)
+  environment   = length(local.parsed_path) > 1 ? element(local.parsed_path, 1) : "dev"
 
   # Common naming convention: {environment}-{region}-{project}-{resource_type}-{resource_name}
   name_prefix = "${local.environment}-${local.region_abbr}-${local.project_name}"

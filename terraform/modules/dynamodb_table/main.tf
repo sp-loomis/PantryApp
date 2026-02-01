@@ -25,17 +25,11 @@ resource "aws_dynamodb_table" "table" {
   dynamic "global_secondary_index" {
     for_each = var.global_secondary_indexes
     content {
-      name            = global_secondary_index.value.name
-      hash_key        = global_secondary_index.value.hash_key
-      range_key       = lookup(global_secondary_index.value, "range_key", null)
-      projection_type = global_secondary_index.value.projection_type
-
-      dynamic "projection" {
-        for_each = lookup(global_secondary_index.value, "non_key_attributes", null) != null ? [1] : []
-        content {
-          non_key_attributes = global_secondary_index.value.non_key_attributes
-        }
-      }
+      name               = global_secondary_index.value.name
+      hash_key           = global_secondary_index.value.hash_key
+      range_key          = lookup(global_secondary_index.value, "range_key", null)
+      projection_type    = global_secondary_index.value.projection_type
+      non_key_attributes = lookup(global_secondary_index.value, "non_key_attributes", null)
     }
   }
 

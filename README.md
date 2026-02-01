@@ -17,6 +17,9 @@ The Pantry App helps you track:
 ### Tech Stack
 - **Frontend**: Python CLI with Rich library for enhanced terminal output
 - **Backend**: AWS Lambda with Lambda Powertools (Python 3.11)
+  - **Powertools via Lambda Layer**: Uses AWS-managed layer (no bundling required)
+  - ARN: `arn:aws:lambda:us-east-2:017000801446:layer:AWSLambdaPowertoolsPythonV3-python311-x86_64:3`
+  - Provides structured logging, tracing, metrics, and API Gateway integration
 - **Database**: DynamoDB with optimized GSIs for different access patterns
 - **Infrastructure**: Terraform/Terragrunt for Infrastructure as Code
 - **Deployment**: GitHub Actions with OIDC authentication (no hardcoded credentials)
@@ -273,14 +276,22 @@ terragrunt apply
 
 ## Monitoring and Observability
 
-The Lambda function uses AWS Lambda Powertools for:
-- **Structured Logging**: JSON logs with correlation IDs
-- **X-Ray Tracing**: Distributed tracing across services
-- **CloudWatch Metrics**: Custom metrics for operations
+The Lambda function uses AWS Lambda Powertools (via AWS-managed Lambda Layer) for:
+- **Structured Logging**: JSON logs with correlation IDs in CloudWatch
+- **X-Ray Tracing**: Distributed tracing across services and API calls
+- **CloudWatch Metrics**: Custom metrics for operations (items created, searches, etc.)
+- **API Gateway Integration**: Automatic request/response logging and error handling
+
+**Lambda Layer Details:**
+- Powertools is provided via an AWS-managed Lambda Layer (see `backend/README.md`)
+- No need to bundle these dependencies with your deployment package
+- AWS maintains the layer with security updates and compatibility fixes
+- Layer ARN is configured in `terraform/modules/main/main.tf`
 
 View logs and metrics in CloudWatch:
 - Log group: `/aws/lambda/dev-use2-pantry-lambda-core-api`
 - Metrics namespace: `pantry-dev`
+- X-Ray traces: AWS X-Ray console
 
 ## Security
 

@@ -166,6 +166,9 @@ module "lambda_role" {
   tags = var.env_tags
 }
 
+# Get the current AWS region for constructing layer ARN
+data "aws_region" "current" {}
+
 # Lambda function for API
 module "api_lambda" {
   source = "../lambda_function"
@@ -179,6 +182,13 @@ module "api_lambda" {
   memory_size    = var.lambda_memory_size
   role_arn       = module.lambda_role.role_arn
   log_retention_days = var.log_retention_days
+
+  # AWS Powertools Lambda Layer (Python 3.11)
+  # ARN format: arn:aws:lambda:{region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python311-x86_64:3
+  # Version 3 contains aws-lambda-powertools[all]==3.x
+  layers = [
+    "arn:aws:lambda:${data.aws_region.current.name}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python311-x86_64:3"
+  ]
 
   environment_variables = {
     ITEMS_TABLE_NAME      = module.items_table.table_name

@@ -63,6 +63,12 @@ variable "log_retention_days" {
   default     = 14
 }
 
+variable "layers" {
+  description = "List of Lambda Layer ARNs to attach to the function"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Additional tags for the Lambda function"
   type        = map(string)

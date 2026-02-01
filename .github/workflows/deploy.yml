@@ -3,21 +3,12 @@ name: Deploy Infrastructure
 on:
   push:
     branches:
-      - main
+      - dev
+      - prod
     paths:
       - "terraform/**"
       - "backend/**"
       - ".github/workflows/deploy.yml"
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Environment to deploy to"
-        required: true
-        default: "dev"
-        type: choice
-        options:
-          - dev
-          - prod
 
 permissions:
   id-token: write # Required for OIDC authentication
@@ -25,9 +16,8 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
+    name: Deploy to ${{ github.ref_name }}
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'dev' }}
 
     steps:
       - name: Checkout code
@@ -59,19 +49,19 @@ jobs:
           cd ..
 
       - name: Terragrunt Init
-        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        working-directory: terraform/environments/${{ github.ref_name }}
         run: terragrunt init
 
       - name: Terragrunt Plan
-        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        working-directory: terraform/environments/${{ github.ref_name }}
         run: terragrunt plan -out=tfplan
 
       - name: Terragrunt Apply
-        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        working-directory: terraform/environments/${{ github.ref_name }}
         run: terragrunt apply -auto-approve tfplan
 
       - name: Get outputs
-        working-directory: terraform/environments/${{ github.event.inputs.environment || 'dev' }}
+        working-directory: terraform/environments/${{ github.ref_name }}
         run: |
           echo "Lambda Function: $(terragrunt output -raw lambda_function_name)"
           echo "Items Table: $(terragrunt output -raw items_table_name)"

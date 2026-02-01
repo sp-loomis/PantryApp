@@ -78,12 +78,12 @@ You CAN edit these files if necessary, but:
 
 ## Restrictions
 
-### Never Push to Main
+### Never Push to Dev
 
-You are **STRICTLY PROHIBITED** from pushing directly to the `main` branch under any circumstances. All changes must:
+You are **STRICTLY PROHIBITED** from pushing directly to the `dev` branch under any circumstances. All changes must:
 
 1. Be made on a feature/issue branch
-2. Go through a pull request
+2. Go through a pull request targeting `dev`
 3. Be reviewed before merging
 
 ### Gemini CLI Usage
@@ -149,85 +149,3 @@ gemini -p "@./ Show me all middleware and how they're structured"
 ---
 
 Remember: You are the technical leader. Make decisions confidently, but always be open to feedback and willing to iterate.
-
----
-
-## Project Context: Pantry App
-
-### Overview
-The Pantry App is an inventory management system for tracking items across multiple storage locations (pantries, freezers, feed storage, etc.). It helps manage item quantities, locations, expiration dates, and tags for easy retrieval and search.
-
-### Architecture
-
-#### Tech Stack
-- **Frontend**: Python CLI (frontend/cli/)
-- **Backend**: AWS Lambda with Lambda Powertools (backend/)
-- **Database**: DynamoDB with multiple tables and GSIs
-- **Infrastructure**: Terraform/Terragrunt for IaC (terraform/)
-- **Region**: US-East-2 (use2)
-
-#### Database Schema
-1. **Items Table** (`{env}-use2-pantry-table-items`)
-   - Primary Key: `item_id` (hash), `created_at` (range)
-   - GSIs:
-     - LocationIndex: Query items by location
-     - UseByDateIndex: Query items by expiration date
-     - ItemNameIndex: Search items by name
-   - Attributes: name, location_id, quantity, unit, use_by_date, tags, notes
-
-2. **Locations Table** (`{env}-use2-pantry-table-locations`)
-   - Primary Key: `location_id` (hash)
-   - Attributes: name, description
-
-3. **Item-Tags Table** (`{env}-use2-pantry-table-item-tags`)
-   - Primary Key: `tag_name` (hash), `item_id` (range)
-   - GSI: ItemTagsIndex for reverse lookup (item_id -> tags)
-
-#### Resource Naming Convention
-All resources follow: `{environment}-{region}-{project}-{resource_type}-{resource_name}`
-- Environment: dev, prod
-- Region: use2 (us-east-2)
-- Project: pantry
-- Example: `dev-use2-pantry-lambda-core-api`
-
-### Directory Structure
-```
-PantryApp/
-├── frontend/
-│   └── cli/              # Python CLI application
-├── backend/              # Lambda function code
-│   ├── app.py           # Main Lambda handler
-│   ├── models.py        # Data models
-│   └── services.py      # Business logic
-├── terraform/
-│   ├── root.hcl         # Root Terragrunt config
-│   ├── modules/         # Terraform modules
-│   │   ├── dynamodb_table/
-│   │   ├── lambda_function/
-│   │   ├── iam_role/
-│   │   └── main/        # Main infrastructure module
-│   └── environments/
-│       ├── dev/
-│       │   ├── globals.hcl
-│       │   └── terragrunt.hcl
-│       └── prod/
-│           ├── globals.hcl
-│           └── terragrunt.hcl
-└── .github/workflows/
-    └── deploy.yml       # Deployment workflow
-```
-
-### Key Features
-1. Storage location management (create, list, update, delete)
-2. Item inventory management (add, remove, update, search)
-3. Use-by date tracking and expiration alerts
-4. Tagging system for flexible categorization
-5. Advanced search and filtering
-6. Aggregate statistics (quantities by unit, location, tag)
-
-### Development Guidelines
-- All Lambda code uses AWS Lambda Powertools for logging, tracing, and metrics
-- DynamoDB uses single-table design patterns where appropriate
-- CLI uses Rich library for enhanced terminal output
-- Infrastructure changes are deployed via GitHub Actions with OIDC authentication
-- No hardcoded AWS credentials or account numbers

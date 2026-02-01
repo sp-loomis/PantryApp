@@ -165,28 +165,34 @@ aws s3api put-public-access-block \
   --region ${REGION}
 
 # 5. Add bucket policy (required by Terragrunt)
-aws s3api put-bucket-policy \
-  --bucket ${BUCKET_NAME} \
-  --policy "{
-    \"Version\": \"2012-10-17\",
-    \"Statement\": [
-      {
-        \"Sid\": \"EnforcedTLS\",
-        \"Effect\": \"Deny\",
-        \"Principal\": \"*\",
-        \"Action\": \"s3:*\",
-        \"Resource\": [
-          \"arn:aws:s3:::${BUCKET_NAME}\",
-          \"arn:aws:s3:::${BUCKET_NAME}/*\"
-        ],
-        \"Condition\": {
-          \"Bool\": {
-            \"aws:SecureTransport\": \"false\"
-          }
+# Save this policy to bucket-policy.json:
+cat > bucket-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnforcedTLS",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::dev-use2-pantry-terraform-state",
+        "arn:aws:s3:::dev-use2-pantry-terraform-state/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
         }
       }
-    ]
-  }" \
+    }
+  ]
+}
+EOF
+
+# Apply the policy
+aws s3api put-bucket-policy \
+  --bucket ${BUCKET_NAME} \
+  --policy file://bucket-policy.json \
   --region ${REGION}
 
 # 6. Create DynamoDB table for state locking
@@ -389,9 +395,46 @@ View logs and metrics in CloudWatch:
 
 **Cause**: The S3 bucket for Terraform state exists but doesn't have a bucket policy configured. Terragrunt expects the bucket to have both versioning enabled and a bucket policy.
 
-**Solution**: Apply the complete S3 bucket configuration from the setup instructions above. Specifically, you need to:
-1. Enable versioning: `aws s3api put-bucket-versioning --bucket <bucket-name> --versioning-configuration Status=Enabled`
-2. Add bucket policy: `aws s3api put-bucket-policy --bucket <bucket-name> --policy '...'` (see full command in setup section)
+**Solution**: Apply the bucket policy using this JSON (adjust bucket name for your environment):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EnforcedTLS",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::dev-use2-pantry-terraform-state",
+        "arn:aws:s3:::dev-use2-pantry-terraform-state/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    }
+  ]
+}
+```
+
+Apply it with:
+```bash
+aws s3api put-bucket-policy \
+  --bucket dev-use2-pantry-terraform-state \
+  --policy file://bucket-policy.json \
+  --region us-east-2
+```
+
+Also enable versioning:
+```bash
+aws s3api put-bucket-versioning \
+  --bucket dev-use2-pantry-terraform-state \
+  --versioning-configuration Status=Enabled \
+  --region us-east-2
+```
 
 #### Warning: "Versioning is not enabled for the remote state S3 bucket"
 

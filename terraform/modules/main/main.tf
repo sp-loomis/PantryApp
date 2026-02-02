@@ -37,10 +37,6 @@ module "items_table" {
     {
       name = "item_name"
       type = "S"
-    },
-    {
-      name = "created_at"
-      type = "S"
     }
   ]
 

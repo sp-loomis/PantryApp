@@ -36,11 +36,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
       - name: Install Gemini CLI
         run: |
           npm install -g @google/gemini-cli
+
+      - name: Setup GitHub CLI Authentication
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | gh auth login --with-token
+          gh auth status
 
       - name: Run Claude Code Action
         uses: anthropics/claude-code-action@v1
@@ -48,7 +55,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: "dev"
-          claude_args: "--verbose"
+          base_branch: 'dev'
+          claude_args: '--verbose'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

@@ -11,6 +11,9 @@ terraform {
 resource "aws_cognito_user_pool" "pool" {
   name = var.pool_name
 
+  # Use email as username
+  username_attributes = ["email"]
+
   # Auto-verify email addresses
   auto_verified_attributes = ["email"]
 

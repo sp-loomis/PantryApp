@@ -56,10 +56,10 @@ def get_cognito_client():
 
 def login(username: str, password: str, user_pool_id: str, client_id: str) -> Dict[str, str]:
     """
-    Authenticate with AWS Cognito using username and password.
+    Authenticate with AWS Cognito using email and password.
 
     Args:
-        username: The user's email or username
+        username: The user's email address (used as username in Cognito)
         password: The user's password
         user_pool_id: The Cognito User Pool ID
         client_id: The Cognito App Client ID
@@ -191,14 +191,13 @@ def is_logged_in() -> bool:
     return tokens is not None and 'IdToken' in tokens
 
 
-def sign_up(username: str, password: str, email: str, user_pool_id: str, client_id: str):
+def sign_up(email: str, password: str, user_pool_id: str, client_id: str):
     """
     Sign up a new user.
 
     Args:
-        username: The desired username
+        email: The user's email address (used as username)
         password: The user's password
-        email: The user's email address
         user_pool_id: The Cognito User Pool ID
         client_id: The Cognito App Client ID
 
@@ -213,7 +212,7 @@ def sign_up(username: str, password: str, email: str, user_pool_id: str, client_
     try:
         response = cognito.sign_up(
             ClientId=client_id,
-            Username=username,
+            Username=email,
             Password=password,
             UserAttributes=[
                 {'Name': 'email', 'Value': email}
@@ -228,7 +227,7 @@ def sign_up(username: str, password: str, email: str, user_pool_id: str, client_
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if error_code == 'UsernameExistsException':
-            raise Exception("Username already exists")
+            raise Exception("Email already exists")
         elif error_code == 'InvalidPasswordException':
             raise Exception("Password does not meet requirements")
         elif error_code == 'InvalidParameterException':
@@ -237,12 +236,12 @@ def sign_up(username: str, password: str, email: str, user_pool_id: str, client_
             raise Exception(f"Signup failed: {e.response['Error']['Message']}")
 
 
-def confirm_signup(username: str, confirmation_code: str, client_id: str):
+def confirm_signup(email: str, confirmation_code: str, client_id: str):
     """
     Confirm user signup with verification code.
 
     Args:
-        username: The username
+        email: The user's email address
         confirmation_code: The verification code sent to email
         client_id: The Cognito App Client ID
 
@@ -254,7 +253,7 @@ def confirm_signup(username: str, confirmation_code: str, client_id: str):
     try:
         cognito.confirm_sign_up(
             ClientId=client_id,
-            Username=username,
+            Username=email,
             ConfirmationCode=confirmation_code
         )
 

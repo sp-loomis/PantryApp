@@ -83,7 +83,7 @@ Add these to your `~/.bashrc` or `~/.zshrc` for persistence.
 Create a new user account:
 
 ```bash
-pantry auth signup --username johndoe --email john@example.com
+pantry auth signup --email john@example.com
 # You'll be prompted for a password
 ```
 
@@ -93,14 +93,14 @@ You'll receive a verification code via email.
 Verify your email address:
 
 ```bash
-pantry auth confirm --username johndoe --code 123456
+pantry auth confirm --email john@example.com --code 123456
 ```
 
 #### Login
 Authenticate and receive JWT tokens:
 
 ```bash
-pantry auth login --username johndoe
+pantry auth login --email john@example.com
 # You'll be prompted for your password
 ```
 
@@ -214,9 +214,11 @@ Use the AWS CLI to add users to the Admin group:
 ```bash
 aws cognito-idp admin-add-user-to-group \
   --user-pool-id <pool-id> \
-  --username <username> \
+  --username <user-email> \
   --group-name Admin
 ```
+
+Note: The `--username` parameter expects the user's email address since email is used as the username.
 
 ### Creating Users Programmatically
 
@@ -229,7 +231,7 @@ cognito = boto3.client('cognito-idp')
 
 cognito.admin_create_user(
     UserPoolId='<pool-id>',
-    Username='newuser',
+    Username='newuser@example.com',  # Email is used as username
     UserAttributes=[
         {'Name': 'email', 'Value': 'newuser@example.com'},
         {'Name': 'email_verified', 'Value': 'true'}
@@ -243,7 +245,7 @@ cognito.admin_create_user(
 
 ### "User not authenticated" Error
 - Ensure you're logged in: `pantry auth status`
-- Login if needed: `pantry auth login --username <your-username>`
+- Login if needed: `pantry auth login --email <your-email>`
 - Check that `COGNITO_CLIENT_ID` environment variable is set
 
 ### "Permission denied" Error
@@ -252,7 +254,7 @@ cognito.admin_create_user(
 
 ### "Token refresh failed" Error
 - Your refresh token has expired (30 days)
-- Login again: `pantry auth login --username <your-username>`
+- Login again: `pantry auth login --email <your-email>`
 
 ### CLI Not Using Authentication
 - Verify environment variables are set: `echo $COGNITO_CLIENT_ID`

@@ -502,9 +502,9 @@ def auth():
 
 
 @auth.command(name='login')
-@click.option('--username', required=True, help='Username or email')
+@click.option('--email', required=True, help='Email address')
 @click.option('--password', required=True, prompt=True, hide_input=True, help='Password')
-def login(username: str, password: str):
+def login(email: str, password: str):
     """Login to Pantry App."""
     if not COGNITO_USER_POOL_ID or not COGNITO_CLIENT_ID:
         result = {
@@ -514,7 +514,7 @@ def login(username: str, password: str):
         sys.exit(1)
 
     try:
-        tokens = auth_login(username, password, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
+        tokens = auth_login(email, password, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
         result = {
             "message": "Login successful",
             "user": username
@@ -535,10 +535,9 @@ def logout():
 
 
 @auth.command(name='signup')
-@click.option('--username', required=True, help='Desired username')
 @click.option('--email', required=True, help='Email address')
 @click.option('--password', required=True, prompt=True, hide_input=True, confirmation_prompt=True, help='Password')
-def signup(username: str, email: str, password: str):
+def signup(email: str, password: str):
     """Sign up for a new Pantry App account."""
     if not COGNITO_USER_POOL_ID or not COGNITO_CLIENT_ID:
         result = {
@@ -548,7 +547,7 @@ def signup(username: str, email: str, password: str):
         sys.exit(1)
 
     try:
-        signup_result = auth_signup(username, password, email, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
+        signup_result = auth_signup(email, password, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
         result = {
             "message": "Signup successful. Please check your email for a verification code.",
             "user_confirmed": signup_result['UserConfirmed'],
@@ -562,9 +561,9 @@ def signup(username: str, email: str, password: str):
 
 
 @auth.command(name='confirm')
-@click.option('--username', required=True, help='Username')
+@click.option('--email', required=True, help='Email address')
 @click.option('--code', required=True, help='Verification code from email')
-def confirm(username: str, code: str):
+def confirm(email: str, code: str):
     """Confirm user signup with verification code."""
     if not COGNITO_CLIENT_ID:
         result = {
@@ -574,7 +573,7 @@ def confirm(username: str, code: str):
         sys.exit(1)
 
     try:
-        confirm_signup(username, code, COGNITO_CLIENT_ID)
+        confirm_signup(email, code, COGNITO_CLIENT_ID)
         result = {"message": "Account confirmed successfully. You can now login."}
         print(json.dumps(result, indent=2))
     except Exception as e:

@@ -1,1 +1,3 @@
 **/.venv
+**/.terragrunt-cache
+**/.terraform.lock.hcl

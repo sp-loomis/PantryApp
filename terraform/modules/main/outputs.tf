@@ -22,3 +22,28 @@ output "lambda_function_arn" {
   description = "ARN of the API Lambda function"
   value       = module.api_lambda.function_arn
 }
+
+output "cognito_user_pool_id" {
+  description = "ID of the Cognito User Pool"
+  value       = module.cognito_pool.user_pool_id
+}
+
+output "cognito_user_pool_arn" {
+  description = "ARN of the Cognito User Pool"
+  value       = module.cognito_pool.user_pool_arn
+}
+
+output "cognito_client_id" {
+  description = "ID of the Cognito User Pool Client"
+  value       = module.cognito_pool.user_pool_client_id
+}
+
+output "cognito_admin_group" {
+  description = "Name of the Admin user group"
+  value       = module.cognito_pool.admin_group_name
+}
+
+output "cognito_user_group" {
+  description = "Name of the User group"
+  value       = module.cognito_pool.user_group_name
+}

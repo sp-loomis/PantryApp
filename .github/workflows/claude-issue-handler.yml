@@ -36,7 +36,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Gemini CLI
         run: |
@@ -55,7 +55,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: 'dev'
-          claude_args: '--verbose'
+          base_branch: "dev"
+          claude_args: "-p --verbose"
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

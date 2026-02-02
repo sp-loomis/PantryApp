@@ -517,7 +517,7 @@ def login(email: str, password: str):
         tokens = auth_login(email, password, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
         result = {
             "message": "Login successful",
-            "user": username
+            "user": email
         }
         print(json.dumps(result, indent=2))
     except Exception as e:

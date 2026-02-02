@@ -1,5 +1,13 @@
 {
   "permissions": {
-    "allow": ["mcp__github__*", "Bash(git *)", "Bash(npm *)", "Bash(gemini *)", "WebSearch", "WebFetch"]
+    "allow": [
+      "mcp__github__*",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npm *)",
+      "Bash(gemini *)",
+      "WebSearch",
+      "WebFetch"
+    ]
   }
 }

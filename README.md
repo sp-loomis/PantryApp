@@ -7,9 +7,12 @@ A serverless inventory management system for tracking items across multiple stor
 ### Prerequisites
 - AWS Account with appropriate permissions
 - Python 3.11+
+- Node.js 18+ (for web frontend)
 - AWS CLI configured
 
 ### Setup
+
+#### CLI Setup
 
 1. **Install CLI dependencies:**
    ```bash
@@ -22,6 +25,27 @@ A serverless inventory management system for tracking items across multiple stor
    ```bash
    export PANTRY_LAMBDA_FUNCTION=dev-use2-pantry-lambda-core-api
    ```
+
+#### Web Frontend Setup
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Configure environment variables:**
+   ```bash
+   cd packages/web
+   cp .env.example .env
+   # Edit .env with your AWS Cognito credentials
+   ```
+
+3. **Start development server:**
+   ```bash
+   npm run dev
+   ```
+
+The web app will be available at `http://localhost:5173`
 
 ## API & CLI Documentation
 
@@ -436,7 +460,9 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ### Tech Stack
 - **Backend**: AWS Lambda with Lambda Powertools (Python 3.11)
 - **Database**: DynamoDB with GSIs for optimized access patterns
-- **Frontend**: Python CLI with Click (outputs JSON matching API responses)
+- **Frontend**:
+  - **CLI**: Python CLI with Click (outputs JSON matching API responses)
+  - **Web**: React 18+ with Vite, Chakra UI, AWS Amplify (authentication)
 - **Infrastructure**: Terraform/Terragrunt
 - **Deployment**: GitHub Actions with OIDC authentication
 - **Region**: US-East-2 (Ohio)
@@ -468,15 +494,21 @@ Example: `dev-use2-pantry-lambda-core-api`
 
 ```
 PantryApp/
-├── frontend/cli/           # Python CLI application
-├── backend/                # Lambda function code
-│   ├── app.py             # Main Lambda handler with Powertools
-│   ├── models.py          # Data models
-│   └── services.py        # Business logic services
-├── terraform/             # Infrastructure as Code
-│   ├── modules/           # Reusable Terraform modules
-│   └── environments/      # Environment configurations
-└── .github/workflows/     # CI/CD workflows
+├── packages/              # Monorepo for web frontend
+│   ├── shared/           # Platform-agnostic business logic
+│   │   └── src/         # Auth services, hooks, utilities
+│   └── web/             # React web application
+│       └── src/         # Components, pages, contexts
+├── frontend/cli/         # Python CLI application
+├── backend/              # Lambda function code
+│   ├── app.py           # Main Lambda handler with Powertools
+│   ├── auth.py          # Authentication middleware
+│   ├── models.py        # Data models
+│   └── services.py      # Business logic services
+├── terraform/            # Infrastructure as Code
+│   ├── modules/         # Reusable Terraform modules
+│   └── environments/    # Environment configurations
+└── .github/workflows/   # CI/CD workflows
 ```
 
 ### AI-Assisted Workflow

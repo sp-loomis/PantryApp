@@ -1,0 +1,21 @@
+{
+  "name": "@pantry-app/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./services/*": "./src/services/*.js",
+    "./hooks/*": "./src/hooks/*.js",
+    "./utils/*": "./src/utils/*.js"
+  },
+  "dependencies": {
+    "aws-amplify": "^6.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.2.0"
+  },
+  "scripts": {
+    "test": "vitest"
+  }
+}

@@ -16,22 +16,71 @@ import boto3
 import click
 from dateutil.parser import parse as parse_date
 
+from auth import (
+    login as auth_login,
+    sign_up as auth_signup,
+    confirm_signup,
+    get_valid_id_token,
+    is_logged_in,
+    clear_tokens
+)
+
 # Initialize Lambda client
 lambda_client = boto3.client('lambda')
 
-# Get Lambda function name from environment
+# Get configuration from environment
 LAMBDA_FUNCTION_NAME = os.environ.get('PANTRY_LAMBDA_FUNCTION', 'dev-use2-pantry-lambda-core-api')
+COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID')
+COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID')
 
 
-def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_params: Optional[dict] = None) -> dict:
+def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_params: Optional[dict] = None, user_id: Optional[str] = None) -> dict:
     """Invoke the Lambda function with the given parameters."""
+    # Get authentication token if available
+    id_token = None
+    if COGNITO_CLIENT_ID:
+        id_token = get_valid_id_token(COGNITO_CLIENT_ID)
+
+    # Add user_id to query params if specified (for admin operations)
+    if user_id and query_params is None:
+        query_params = {}
+    if user_id:
+        query_params['user_id'] = user_id
+
+    # Build the event
+    headers = {}
+    request_context = {"requestId": "cli-request"}
+
+    # If we have a token, add it to the Authorization header and simulate Cognito authorizer context
+    if id_token:
+        headers['Authorization'] = f'Bearer {id_token}'
+        # Simulate what API Gateway Cognito Authorizer would add
+        # Note: This is a simplified version - in production, API Gateway would validate the JWT
+        # and extract claims. For CLI direct Lambda invocation, we add minimal context.
+        try:
+            import base64
+            # Parse JWT to get claims (simplified - just get the payload)
+            parts = id_token.split('.')
+            if len(parts) >= 2:
+                # Decode payload (add padding if needed)
+                payload_part = parts[1]
+                padding = 4 - len(payload_part) % 4
+                if padding != 4:
+                    payload_part += '=' * padding
+                claims = json.loads(base64.urlsafe_b64decode(payload_part))
+                request_context['authorizer'] = {
+                    'claims': claims
+                }
+        except Exception:
+            pass  # If parsing fails, continue without claims
+
     event = {
         "httpMethod": method,
         "path": path,
         "body": json.dumps(body) if body else None,
         "queryStringParameters": query_params,
-        "headers": {},
-        "requestContext": {"requestId": "cli-request"},
+        "headers": headers,
+        "requestContext": request_context,
         "isBase64Encoded": False
     }
 
@@ -84,12 +133,13 @@ def location():
 @location.command(name='create')
 @click.option('--name', required=True, help='Location name')
 @click.option('--description', default='', help='Location description')
-def create_location(name: str, description: str):
+@click.option('--user-id', help='[Admin only] Create location for specific user')
+def create_location(name: str, description: str, user_id: Optional[str]):
     """Create a new storage location."""
     result = invoke_lambda('POST', '/locations', {
         'name': name,
         'description': description
-    })
+    }, user_id=user_id)
 
     print(json.dumps(result, indent=2))
 
@@ -98,9 +148,10 @@ def create_location(name: str, description: str):
 
 
 @location.command(name='list')
-def list_locations():
+@click.option('--user-id', help='[Admin only] List locations for specific user')
+def list_locations(user_id: Optional[str]):
     """List all storage locations."""
-    result = invoke_lambda('GET', '/locations')
+    result = invoke_lambda('GET', '/locations', user_id=user_id)
 
     print(json.dumps(result, indent=2))
 
@@ -110,9 +161,10 @@ def list_locations():
 
 @location.command(name='get')
 @click.argument('location_id')
-def get_location(location_id: str):
+@click.option('--user-id', help='[Admin only] Get location for specific user')
+def get_location(location_id: str, user_id: Optional[str]):
     """Get details of a specific location."""
-    result = invoke_lambda('GET', f'/locations/{location_id}')
+    result = invoke_lambda('GET', f'/locations/{location_id}', user_id=user_id)
 
     print(json.dumps(result, indent=2))
 
@@ -124,7 +176,8 @@ def get_location(location_id: str):
 @click.argument('location_id')
 @click.option('--name', help='New location name')
 @click.option('--description', help='New location description')
-def update_location(location_id: str, name: Optional[str], description: Optional[str]):
+@click.option('--user-id', help='[Admin only] Update location for specific user')
+def update_location(location_id: str, name: Optional[str], description: Optional[str], user_id: Optional[str]):
     """Update a storage location."""
     updates = {}
     if name:
@@ -136,7 +189,7 @@ def update_location(location_id: str, name: Optional[str], description: Optional
         print(json.dumps({"error": "No updates provided"}, indent=2))
         sys.exit(1)
 
-    result = invoke_lambda('PUT', f'/locations/{location_id}', updates)
+    result = invoke_lambda('PUT', f'/locations/{location_id}', updates, user_id=user_id)
 
     print(json.dumps(result, indent=2))
 
@@ -146,10 +199,11 @@ def update_location(location_id: str, name: Optional[str], description: Optional
 
 @location.command(name='delete')
 @click.argument('location_id')
+@click.option('--user-id', help='[Admin only] Delete location for specific user')
 @click.confirmation_option(prompt='Are you sure you want to delete this location?')
-def delete_location(location_id: str):
+def delete_location(location_id: str, user_id: Optional[str]):
     """Delete a storage location."""
-    result = invoke_lambda('DELETE', f'/locations/{location_id}')
+    result = invoke_lambda('DELETE', f'/locations/{location_id}', user_id=user_id)
 
     print(json.dumps(result, indent=2))
 
@@ -435,6 +489,107 @@ def aggregate_stats(location: Optional[str], tag: Optional[str], weight_unit: Op
 
     if 'error' in result:
         sys.exit(1)
+
+
+# ============================================================================
+# Authentication Commands
+# ============================================================================
+
+@cli.group()
+def auth():
+    """Manage authentication."""
+    pass
+
+
+@auth.command(name='login')
+@click.option('--email', required=True, help='Email address')
+@click.option('--password', required=True, prompt=True, hide_input=True, help='Password')
+def login(email: str, password: str):
+    """Login to Pantry App."""
+    if not COGNITO_USER_POOL_ID or not COGNITO_CLIENT_ID:
+        result = {
+            "error": "Cognito configuration not found. Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID environment variables."
+        }
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+
+    try:
+        tokens = auth_login(email, password, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
+        result = {
+            "message": "Login successful",
+            "user": email
+        }
+        print(json.dumps(result, indent=2))
+    except Exception as e:
+        result = {"error": str(e)}
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+
+
+@auth.command(name='logout')
+def logout():
+    """Logout from Pantry App."""
+    clear_tokens()
+    result = {"message": "Logged out successfully"}
+    print(json.dumps(result, indent=2))
+
+
+@auth.command(name='signup')
+@click.option('--email', required=True, help='Email address')
+@click.option('--password', required=True, prompt=True, hide_input=True, confirmation_prompt=True, help='Password')
+def signup(email: str, password: str):
+    """Sign up for a new Pantry App account."""
+    if not COGNITO_USER_POOL_ID or not COGNITO_CLIENT_ID:
+        result = {
+            "error": "Cognito configuration not found. Set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID environment variables."
+        }
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+
+    try:
+        signup_result = auth_signup(email, password, COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID)
+        result = {
+            "message": "Signup successful. Please check your email for a verification code.",
+            "user_confirmed": signup_result['UserConfirmed'],
+            "user_id": signup_result['UserSub']
+        }
+        print(json.dumps(result, indent=2))
+    except Exception as e:
+        result = {"error": str(e)}
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+
+
+@auth.command(name='confirm')
+@click.option('--email', required=True, help='Email address')
+@click.option('--code', required=True, help='Verification code from email')
+def confirm(email: str, code: str):
+    """Confirm user signup with verification code."""
+    if not COGNITO_CLIENT_ID:
+        result = {
+            "error": "Cognito configuration not found. Set COGNITO_CLIENT_ID environment variable."
+        }
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+
+    try:
+        confirm_signup(email, code, COGNITO_CLIENT_ID)
+        result = {"message": "Account confirmed successfully. You can now login."}
+        print(json.dumps(result, indent=2))
+    except Exception as e:
+        result = {"error": str(e)}
+        print(json.dumps(result, indent=2))
+        sys.exit(1)
+
+
+@auth.command(name='status')
+def status():
+    """Check authentication status."""
+    if is_logged_in():
+        result = {"status": "authenticated", "message": "You are logged in"}
+    else:
+        result = {"status": "unauthenticated", "message": "You are not logged in"}
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == '__main__':

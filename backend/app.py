@@ -19,6 +19,7 @@ from aws_lambda_powertools.utilities.validation import validate
 
 from models import Item, Location, ItemTag
 from services import ItemService, LocationService, TagService
+from auth import get_effective_user_id, get_user_id_from_event
 
 # Initialize Powertools utilities
 logger = Logger()
@@ -49,13 +50,22 @@ tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
 def create_location():
     """Create a new storage location."""
     try:
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         data = app.current_event.json_body
         location = location_service.create_location(
+            user_id=user_id,
             name=data['name'],
             description=data.get('description', '')
         )
         metrics.add_metric(name="LocationCreated", unit="Count", value=1)
         return {"location": location}, 201
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error creating location")
         metrics.add_metric(name="LocationCreationError", unit="Count", value=1)
@@ -65,10 +75,18 @@ def create_location():
 @app.get("/locations")
 @tracer.capture_method
 def list_locations():
-    """List all storage locations."""
+    """List all storage locations for the authenticated user."""
     try:
-        locations = location_service.list_locations()
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
+        locations = location_service.list_locations(user_id)
         return {"locations": locations}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing locations")
         return {"error": str(e)}, 500
@@ -79,10 +97,18 @@ def list_locations():
 def get_location(location_id: str):
     """Get a specific storage location."""
     try:
-        location = location_service.get_location(location_id)
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
+        location = location_service.get_location(user_id, location_id)
         if not location:
             return {"error": "Location not found"}, 404
         return {"location": location}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting location")
         return {"error": str(e)}, 500
@@ -93,12 +119,20 @@ def get_location(location_id: str):
 def update_location(location_id: str):
     """Update a storage location."""
     try:
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         data = app.current_event.json_body
-        location = location_service.update_location(location_id, data)
+        location = location_service.update_location(user_id, location_id, data)
         if not location:
             return {"error": "Location not found"}, 404
         metrics.add_metric(name="LocationUpdated", unit="Count", value=1)
         return {"location": location}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error updating location")
         return {"error": str(e)}, 500
@@ -109,11 +143,19 @@ def update_location(location_id: str):
 def delete_location(location_id: str):
     """Delete a storage location."""
     try:
-        success = location_service.delete_location(location_id)
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
+        success = location_service.delete_location(user_id, location_id)
         if not success:
             return {"error": "Location not found"}, 404
         metrics.add_metric(name="LocationDeleted", unit="Count", value=1)
         return {"message": "Location deleted successfully"}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting location")
         return {"error": str(e)}, 500
@@ -128,12 +170,18 @@ def delete_location(location_id: str):
 def create_item():
     """Create a new inventory item with optional dimensions."""
     try:
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         data = app.current_event.json_body
         logger.info(f"Received request body: {data}")
         dimensions_from_request = data.get('dimensions', [])
         logger.info(f"Extracted dimensions: {dimensions_from_request}")
 
         item = item_service.create_item(
+            user_id=user_id,
             name=data['name'],
             location_id=data['location_id'],
             quantity=data.get('quantity', 1),
@@ -146,6 +194,9 @@ def create_item():
         metrics.add_metric(name="ItemCreated", unit="Count", value=1)
         logger.info(f"Created item with dimensions: {item.get('dimensions')}")
         return {"item": item}, 201
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except ValueError as e:
         logger.warning(f"Validation error creating item: {str(e)}")
         return {"error": str(e)}, 400
@@ -162,20 +213,27 @@ def list_items():
     try:
         query_params = app.current_event.query_string_parameters or {}
 
+        # Get user_id from JWT claims or use admin-specified user
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         location_id = query_params.get('location_id')
         tag = query_params.get('tag')
         name = query_params.get('name')
 
         if location_id:
-            items = item_service.get_items_by_location(location_id)
+            items = item_service.get_items_by_location(user_id, location_id)
         elif tag:
-            items = item_service.get_items_by_tag(tag)
+            items = item_service.get_items_by_tag(user_id, tag)
         elif name:
-            items = item_service.search_items_by_name(name)
+            items = item_service.search_items_by_name(user_id, name)
         else:
-            items = item_service.list_all_items()
+            items = item_service.list_all_items(user_id)
 
         return {"items": items}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing items")
         return {"error": str(e)}, 500
@@ -186,10 +244,18 @@ def list_items():
 def get_item(item_id: str):
     """Get a specific inventory item."""
     try:
-        item = item_service.get_item(item_id)
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
+        item = item_service.get_item(user_id, item_id)
         if not item:
             return {"error": "Item not found"}, 404
         return {"item": item}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting item")
         return {"error": str(e)}, 500
@@ -200,12 +266,20 @@ def get_item(item_id: str):
 def update_item(item_id: str):
     """Update an inventory item, including dimensions."""
     try:
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         data = app.current_event.json_body
-        item = item_service.update_item(item_id, data)
+        item = item_service.update_item(user_id, item_id, data)
         if not item:
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemUpdated", unit="Count", value=1)
         return {"item": item}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except ValueError as e:
         logger.warning(f"Validation error updating item: {str(e)}")
         return {"error": str(e)}, 400
@@ -219,11 +293,19 @@ def update_item(item_id: str):
 def delete_item(item_id: str):
     """Delete an inventory item (mark as used)."""
     try:
-        success = item_service.delete_item(item_id)
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
+        success = item_service.delete_item(user_id, item_id)
         if not success:
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemDeleted", unit="Count", value=1)
         return {"message": "Item deleted successfully"}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting item")
         return {"error": str(e)}, 500
@@ -235,11 +317,19 @@ def get_expiring_items():
     """Get items expiring soon."""
     try:
         query_params = app.current_event.query_string_parameters or {}
+
+        # Get user_id from JWT claims or use admin-specified user
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         location_id = query_params.get('location_id')
         days = int(query_params.get('days', 7))
 
-        items = item_service.get_expiring_items(location_id, days)
+        items = item_service.get_expiring_items(user_id, location_id, days)
         return {"items": items}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting expiring items")
         return {"error": str(e)}, 500
@@ -254,8 +344,14 @@ def get_expiring_items():
 def search_items():
     """Advanced search for items with multiple criteria."""
     try:
+        # Get user_id from JWT claims or use admin-specified user
+        query_params = app.current_event.query_string_parameters or {}
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         data = app.current_event.json_body
         items = item_service.search_items(
+            user_id=user_id,
             name=data.get('name'),
             location_id=data.get('location_id'),
             tags=data.get('tags', []),
@@ -263,6 +359,9 @@ def search_items():
             use_by_date_end=data.get('use_by_date_end')
         )
         return {"items": items}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error searching items")
         return {"error": str(e)}, 500
@@ -274,6 +373,11 @@ def get_aggregate_stats():
     """Get aggregate statistics for inventory with dimension support."""
     try:
         query_params = app.current_event.query_string_parameters or {}
+
+        # Get user_id from JWT claims or use admin-specified user
+        requested_user_id = query_params.get('user_id')
+        user_id = get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
         location_id = query_params.get('location_id')
         tag = query_params.get('tag')
 
@@ -285,8 +389,11 @@ def get_aggregate_stats():
         if query_params.get('volume_unit'):
             requested_units['volume'] = query_params['volume_unit']
 
-        stats = item_service.get_aggregate_stats(location_id, tag, requested_units or None)
+        stats = item_service.get_aggregate_stats(user_id, location_id, tag, requested_units or None)
         return {"stats": stats}
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting aggregate stats")
         return {"error": str(e)}, 500

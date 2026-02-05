@@ -1,19 +1,29 @@
-# DynamoDB table for pantry items
+# Cognito User Pool for authentication
+module "cognito_pool" {
+  source = "../cognito_user_pool"
+
+  pool_name   = "${var.name_prefix}-user-pool"
+  client_name = "${var.name_prefix}-client"
+  environment = var.environment
+  tags        = var.env_tags
+}
+
+# DynamoDB table for pantry items (user-scoped)
 module "items_table" {
   source = "../dynamodb_table"
 
   table_name  = "${var.name_prefix}-table-items"
   environment = var.environment
-  hash_key    = "item_id"
-  range_key   = "created_at"
+  hash_key    = "user_id"
+  range_key   = "item_id"
 
   attributes = [
     {
-      name = "item_id"
+      name = "user_id"
       type = "S"
     },
     {
-      name = "created_at"
+      name = "item_id"
       type = "S"
     },
     {
@@ -33,20 +43,20 @@ module "items_table" {
   global_secondary_indexes = [
     {
       name            = "LocationIndex"
-      hash_key        = "location_id"
-      range_key       = "created_at"
+      hash_key        = "user_id"
+      range_key       = "location_id"
       projection_type = "ALL"
     },
     {
       name            = "UseByDateIndex"
-      hash_key        = "location_id"
+      hash_key        = "user_id"
       range_key       = "use_by_date"
       projection_type = "ALL"
     },
     {
       name            = "ItemNameIndex"
-      hash_key        = "item_name"
-      range_key       = "created_at"
+      hash_key        = "user_id"
+      range_key       = "item_name"
       projection_type = "ALL"
     }
   ]
@@ -55,15 +65,20 @@ module "items_table" {
   tags         = var.env_tags
 }
 
-# DynamoDB table for storage locations
+# DynamoDB table for storage locations (user-scoped)
 module "locations_table" {
   source = "../dynamodb_table"
 
   table_name  = "${var.name_prefix}-table-locations"
   environment = var.environment
-  hash_key    = "location_id"
+  hash_key    = "user_id"
+  range_key   = "location_id"
 
   attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
     {
       name = "location_id"
       type = "S"
@@ -74,16 +89,24 @@ module "locations_table" {
   tags         = var.env_tags
 }
 
-# DynamoDB table for item-tag relationships
+# DynamoDB table for item-tag relationships (user-scoped)
 module "item_tags_table" {
   source = "../dynamodb_table"
 
   table_name  = "${var.name_prefix}-table-item-tags"
   environment = var.environment
-  hash_key    = "tag_name"
-  range_key   = "item_id"
+  hash_key    = "user_id"
+  range_key   = "tag_item_composite"
 
   attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "tag_item_composite"
+      type = "S"
+    },
     {
       name = "tag_name"
       type = "S"
@@ -96,9 +119,15 @@ module "item_tags_table" {
 
   global_secondary_indexes = [
     {
-      name            = "ItemTagsIndex"
-      hash_key        = "item_id"
+      name            = "TagIndex"
+      hash_key        = "user_id"
       range_key       = "tag_name"
+      projection_type = "ALL"
+    },
+    {
+      name            = "ItemTagsIndex"
+      hash_key        = "user_id"
+      range_key       = "item_id"
       projection_type = "ALL"
     }
   ]
@@ -184,6 +213,8 @@ module "api_lambda" {
     ITEMS_TABLE_NAME      = module.items_table.table_name
     LOCATIONS_TABLE_NAME  = module.locations_table.table_name
     ITEM_TAGS_TABLE_NAME  = module.item_tags_table.table_name
+    COGNITO_USER_POOL_ID  = module.cognito_pool.user_pool_id
+    COGNITO_CLIENT_ID     = module.cognito_pool.user_pool_client_id
     ENVIRONMENT           = var.environment
   }
 

@@ -7,9 +7,12 @@ A serverless inventory management system for tracking items across multiple stor
 ### Prerequisites
 - AWS Account with appropriate permissions
 - Python 3.11+
+- Node.js 18+ (for React frontend)
 - AWS CLI configured
 
 ### Setup
+
+#### Python CLI
 
 1. **Install CLI dependencies:**
    ```bash
@@ -22,6 +25,28 @@ A serverless inventory management system for tracking items across multiple stor
    ```bash
    export PANTRY_LAMBDA_FUNCTION=dev-use2-pantry-lambda-core-api
    ```
+
+#### React Web Frontend
+
+1. **Install dependencies:**
+   ```bash
+   cd frontend/react
+   npm install
+   ```
+
+2. **Configure environment:**
+   ```bash
+   cd web
+   cp .env.example .env
+   # Edit .env with your AWS Cognito credentials
+   ```
+
+3. **Start development server:**
+   ```bash
+   npm run dev
+   ```
+
+See [frontend/react/README.md](frontend/react/README.md) for detailed React frontend documentation.
 
 ## API & CLI Documentation
 
@@ -436,7 +461,9 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ### Tech Stack
 - **Backend**: AWS Lambda with Lambda Powertools (Python 3.11)
 - **Database**: DynamoDB with GSIs for optimized access patterns
-- **Frontend**: Python CLI with Click (outputs JSON matching API responses)
+- **Frontend**:
+  - Python CLI with Click (outputs JSON matching API responses)
+  - React Web App with AWS Cognito authentication
 - **Infrastructure**: Terraform/Terragrunt
 - **Deployment**: GitHub Actions with OIDC authentication
 - **Region**: US-East-2 (Ohio)
@@ -468,7 +495,11 @@ Example: `dev-use2-pantry-lambda-core-api`
 
 ```
 PantryApp/
-├── frontend/cli/           # Python CLI application
+├── frontend/
+│   ├── cli/                # Python CLI application
+│   └── react/              # React web frontend
+│       ├── shared/         # Platform-agnostic business logic
+│       └── web/            # React web application
 ├── backend/                # Lambda function code
 │   ├── app.py             # Main Lambda handler with Powertools
 │   ├── models.py          # Data models

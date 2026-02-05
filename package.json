@@ -1,0 +1,23 @@
+{
+  "name": "pantry-app",
+  "version": "1.0.0",
+  "description": "Serverless inventory management system",
+  "private": true,
+  "workspaces": [
+    "frontend/react/shared",
+    "frontend/react/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@pantry-app/web",
+    "build": "npm run build --workspace=@pantry-app/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  },
+  "keywords": ["inventory", "pantry", "serverless", "aws"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

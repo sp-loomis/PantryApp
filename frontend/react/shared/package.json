@@ -1,0 +1,19 @@
+{
+  "name": "@pantry-app/shared",
+  "version": "1.0.0",
+  "description": "Platform-agnostic business logic for Pantry App",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "test": "vitest"
+  },
+  "keywords": ["pantry", "authentication", "shared"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "aws-amplify": "^6.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}

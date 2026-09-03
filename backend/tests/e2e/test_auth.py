@@ -1,7 +1,7 @@
 """E2E tests for the cross-cutting auth contract.
 
 Every route resolves the effective user via ``auth.get_effective_user_id``:
-- an unauthenticated request (no ``sub`` claim) -> 403
+- an unauthenticated request (no ``sub`` claim) -> 401
 - a non-admin requesting another user's ``user_id`` -> 403
 - an Admin may act on another user's data via ``?user_id=`` -> allowed
 
@@ -11,26 +11,26 @@ every endpoint because they all call the same resolver.
 
 
 # ---------------------------------------------------------------------------
-# Unauthenticated -> 403 (across a few route families)
+# Unauthenticated -> 401 (across a few route families)
 # ---------------------------------------------------------------------------
 
-def test_unauthenticated_get_items_returns_403(api):
+def test_unauthenticated_get_items_returns_401(api):
     resp = api.call("GET", "/items", user=None)
 
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert "not authenticated" in resp.body["error"].lower()
 
 
-def test_unauthenticated_create_location_returns_403(api):
+def test_unauthenticated_create_location_returns_401(api):
     resp = api.call("POST", "/locations", body={"name": "Pantry"}, user=None)
 
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
-def test_unauthenticated_aggregate_returns_403(api):
+def test_unauthenticated_aggregate_returns_401(api):
     resp = api.call("GET", "/aggregate", user=None)
 
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

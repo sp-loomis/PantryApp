@@ -289,16 +289,13 @@ def add_item(name: str, location: str, count: Optional[float],
 @item.command(name='list')
 @click.option('--location', help='Filter by location ID')
 @click.option('--tag', help='Filter by tag')
-@click.option('--name', help='Filter by name')
-def list_items(location: Optional[str], tag: Optional[str], name: Optional[str]):
-    """List inventory items."""
+def list_items(location: Optional[str], tag: Optional[str]):
+    """List inventory items. Use `search --name` for name search."""
     query_params = {}
     if location:
         query_params['location_id'] = location
     if tag:
         query_params['tag'] = tag
-    if name:
-        query_params['name'] = name
 
     result = invoke_lambda('GET', '/items', query_params=query_params)
 
@@ -481,13 +478,15 @@ def list_tags():
 # ============================================================================
 
 @cli.command(name='search')
-@click.option('--name', help='Search by name')
+@click.option('--name', help='Fuzzy search by name (multi-word, order-independent)')
 @click.option('--location', help='Filter by location ID')
 @click.option('--tags', help='Filter by comma-separated tags')
 @click.option('--use-by-start', help='Filter by use-by date start (YYYY-MM-DD)')
 @click.option('--use-by-end', help='Filter by use-by date end (YYYY-MM-DD)')
+@click.option('--min-score', type=float, help='Fuzzy match threshold, 0-1 (default 0.7)')
 def search_items(name: Optional[str], location: Optional[str], tags: Optional[str],
-                 use_by_start: Optional[str], use_by_end: Optional[str]):
+                 use_by_start: Optional[str], use_by_end: Optional[str],
+                 min_score: Optional[float]):
     """Advanced search for items."""
     search_data = {}
 
@@ -498,9 +497,19 @@ def search_items(name: Optional[str], location: Optional[str], tags: Optional[st
     if tags:
         search_data['tags'] = [tag.strip() for tag in tags.split(',')]
     if use_by_start:
-        search_data['use_by_date_start'] = use_by_start
+        try:
+            search_data['use_by_date_start'] = parse_date(use_by_start).isoformat()
+        except ValueError:
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
+            sys.exit(1)
     if use_by_end:
-        search_data['use_by_date_end'] = use_by_end
+        try:
+            search_data['use_by_date_end'] = parse_date(use_by_end).isoformat()
+        except ValueError:
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
+            sys.exit(1)
+    if min_score is not None:
+        search_data['min_score'] = min_score
 
     result = invoke_lambda('POST', '/search', search_data)
 

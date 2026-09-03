@@ -21,6 +21,8 @@ def test_create_item_happy(api):
     assert item["location_id"] == "fridge"
     assert item["tags"] == []
     assert item["use_by_date"] is None
+    # dimensions key is always present, even when the item has none.
+    assert item["dimensions"] == []
     assert "item_id" in item
 
 
@@ -80,6 +82,24 @@ def test_create_item_duplicate_dimension_type_returns_400(api):
     assert "duplicate" in resp.body["error"].lower()
 
 
+def test_create_item_non_numeric_dimension_value_returns_400(api):
+    # A non-numeric value must be a clean 400, not a 500 from Decimal() blowing up.
+    resp = _make_item(
+        api, dimensions=[{"dimension_type": "weight", "value": "heavy", "unit": "kg"}]
+    )
+
+    assert resp.status_code == 400
+    assert "dimension value" in resp.body["error"].lower()
+
+
+def test_create_item_non_list_tags_returns_400(api):
+    # A bare string would otherwise be iterated char-by-char into bogus tags.
+    resp = _make_item(api, tags="dairy")
+
+    assert resp.status_code == 400
+    assert "tags" in resp.body["error"].lower()
+
+
 # ---------------------------------------------------------------------------
 # GET /items (with filters)
 # ---------------------------------------------------------------------------
@@ -114,14 +134,20 @@ def test_list_items_by_tag(api):
     assert [i["name"] for i in resp.body["items"]] == ["Milk"]
 
 
-def test_list_items_by_name(api):
-    _make_item(api, name="Milk")
-    _make_item(api, name="Bread")
+def test_list_items_location_and_tag_stacks(api):
+    # location_id AND tag: only items matching BOTH are returned.
+    _make_item(api, name="Milk", location_id="fridge", tags=["dairy"])
+    _make_item(api, name="Cheese", location_id="fridge", tags=["snack"])   # right loc, wrong tag
+    _make_item(api, name="Yogurt", location_id="pantry", tags=["dairy"])   # right tag, wrong loc
 
-    resp = api.call("GET", "/items", query={"name": "Milk"})
+    resp = api.call("GET", "/items", query={"location_id": "fridge", "tag": "dairy"})
 
     assert resp.status_code == 200
     assert [i["name"] for i in resp.body["items"]] == ["Milk"]
+
+
+# Name search lives on POST /search (fuzzy, ranked) — see tests/e2e/test_search.py.
+# GET /items only exposes structural location/tag filters.
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +181,13 @@ def test_expiring_filters_by_location(api):
 
 def test_expiring_invalid_days_returns_400(api):
     resp = api.call("GET", "/items/expiring", query={"days": "soon"})
+
+    assert resp.status_code == 400
+    assert "days" in resp.body["error"].lower()
+
+
+def test_expiring_negative_days_returns_400(api):
+    resp = api.call("GET", "/items/expiring", query={"days": "-5"})
 
     assert resp.status_code == 400
     assert "days" in resp.body["error"].lower()

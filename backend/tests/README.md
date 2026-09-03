@@ -90,7 +90,9 @@ Assert **both** the status code and the relevant body keys/values, not just one.
 Every route resolves the caller via `auth.get_effective_user_id`, so the same
 three behaviors hold everywhere and are covered in `test_auth.py`:
 
-- **Unauthenticated** (no `sub` claim) → `403`. Simulate with `user=None`.
+- **Unauthenticated** (no `sub` claim) → `401`. Simulate with `user=None`. The
+  resolver raises `auth.AuthenticationError` (a `PermissionError` subclass), which
+  every route maps to `401` — distinct from an authenticated-but-forbidden `403`.
 - **Cross-user, non-admin** (`?user_id=` for someone else) → `403`.
 - **Admin override** — a caller in the `Admin` Cognito group may act on another
   user's data via `?user_id=`. Simulate with `groups=["Admin"]` +

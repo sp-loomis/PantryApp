@@ -49,6 +49,18 @@ def test_aggregate_by_tag(api):
     assert resp.body["stats"]["total_items"] == 1
 
 
+def test_aggregate_location_and_tag_stacks(api):
+    # location_id AND tag narrow together (intersection), matching /items and /search.
+    _make_item(api, name="Milk", location_id="fridge", tags=["dairy"])
+    _make_item(api, name="Cheese", location_id="fridge", tags=["snack"])   # right loc, wrong tag
+    _make_item(api, name="Yogurt", location_id="pantry", tags=["dairy"])   # right tag, wrong loc
+
+    resp = api.call("GET", "/aggregate", query={"location_id": "fridge", "tag": "dairy"})
+
+    assert resp.status_code == 200
+    assert resp.body["stats"]["total_items"] == 1
+
+
 def test_aggregate_unit_conversion(api):
     _seed(api)
 

@@ -14,6 +14,7 @@ from models import Item, Location, ItemTag
 from dimensions import (
     Dimension, DimensionType, validate_dimension, aggregate_dimensions
 )
+from search import match_name, DEFAULT_MIN_SCORE
 
 logger = Logger(child=True)
 
@@ -21,6 +22,19 @@ logger = Logger(child=True)
 def _now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value: str) -> datetime:
+    """Parse an ISO-8601 string to a timezone-aware datetime (assume UTC if naive).
+
+    Normalizing to aware datetimes lets us compare date-only (``2026-09-09``) and
+    full-timestamp (``2026-09-09T12:00:00+00:00``) values correctly, instead of the
+    prefix-sensitive lexicographic string compare they'd otherwise get.
+    """
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _serialize_dimensions(dimensions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -99,17 +113,14 @@ class LocationService:
 
         Returns False when the location does not exist so callers can surface a
         404 (DynamoDB's delete_item succeeds unconditionally, so we must check
-        existence first).
+        existence first). A genuine delete failure propagates (surfaced as 500)
+        rather than being swallowed into a misleading 404.
         """
         if not self.get_location(user_id, location_id):
             return False
-        try:
-            self.table.delete_item(Key={"user_id": user_id, "location_id": location_id})
-            logger.info(f"Deleted location: {location_id} for user: {user_id}")
-            return True
-        except Exception:
-            logger.exception(f"Error deleting location: {location_id}")
-            return False
+        self.table.delete_item(Key={"user_id": user_id, "location_id": location_id})
+        logger.info(f"Deleted location: {location_id} for user: {user_id}")
+        return True
 
 
 class TagService:
@@ -171,6 +182,8 @@ class ItemService:
             for dim in item["dimensions"]:
                 if "value" in dim:
                     dim["value"] = float(dim["value"])
+        # Guarantee a stable shape: items stored without dimensions omit the key.
+        item.setdefault("dimensions", [])
         item.setdefault("tags", [])
         # use_by_date is a sparse-index key: absent on storage when unset, but
         # surfaced as None here so responses have a stable shape.
@@ -276,13 +289,32 @@ class ItemService:
             return []
         return self._batch_get_items(user_id, item_ids)
 
-    def search_items_by_name(self, user_id: str, name: str) -> List[Dict[str, Any]]:
-        """Search items by name for a specific user."""
-        response = self.items_table.query(
-            IndexName="ItemNameIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id) & Key("item_name").eq(name.lower())
-        )
-        return [self._deserialize_item(item) for item in response.get("Items", [])]
+    def list_items(
+        self,
+        user_id: str,
+        location_id: Optional[str] = None,
+        tag: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List items, optionally narrowing by location and/or tag.
+
+        Filters **stack** (AND): passing both returns the intersection. Queries the
+        more selective index for the primary filter and applies the remaining one
+        in memory against the item's denormalized ``tags`` (same shape as
+        ``get_expiring_items`` and ``search_items``).
+        """
+        if location_id:
+            items = self.get_items_by_location(user_id, location_id)
+        elif tag:
+            items = self.get_items_by_tag(user_id, tag)
+        else:
+            items = self.list_all_items(user_id)
+
+        # Second filter applied in memory when both are present.
+        if location_id and tag:
+            wanted = tag.lower()
+            items = [item for item in items if wanted in item.get("tags", [])]
+
+        return items
 
     def get_expiring_items(self, user_id: str, location_id: Optional[str] = None, days: int = 7) -> List[Dict[str, Any]]:
         """Get items expiring within the specified number of days for a specific user."""
@@ -313,9 +345,7 @@ class ItemService:
 
         if "name" in updates:
             set_parts.append("#n = :name")
-            set_parts.append("item_name = :item_name")
             expr_values[":name"] = updates["name"]
-            expr_values[":item_name"] = updates["name"].lower()
             expr_names["#n"] = "name"
 
         if "location_id" in updates:
@@ -372,8 +402,14 @@ class ItemService:
 
         response = self.items_table.update_item(**update_kwargs)
 
+        attributes = response.get("Attributes")
+        if not attributes:
+            # ALL_NEW returns the row after a successful update; an empty result
+            # signals failure, not a valid empty item.
+            return None
+
         logger.info(f"Updated item: {item_id} for user: {user_id}")
-        return self._deserialize_item(response.get("Attributes", {}))
+        return self._deserialize_item(attributes)
 
     def delete_item(self, user_id: str, item_id: str) -> bool:
         """Delete an item for a specific user."""
@@ -381,21 +417,19 @@ class ItemService:
         if not item:
             return False
 
-        try:
-            # Remove reverse-index rows for the item's tags (read off the item).
-            tags = item.get("tags", [])
-            if tags:
-                self.tag_service.remove_tags_from_item(user_id, item_id, tags)
+        # Not-found is handled above; a genuine failure below must propagate
+        # (surfaced as 500) rather than be swallowed into a misleading 404.
+        # Remove reverse-index rows for the item's tags (read off the item).
+        tags = item.get("tags", [])
+        if tags:
+            self.tag_service.remove_tags_from_item(user_id, item_id, tags)
 
-            self.items_table.delete_item(
-                Key={"user_id": user_id, "item_id": item_id}
-            )
+        self.items_table.delete_item(
+            Key={"user_id": user_id, "item_id": item_id}
+        )
 
-            logger.info(f"Deleted item: {item_id} for user: {user_id}")
-            return True
-        except Exception:
-            logger.exception(f"Error deleting item: {item_id}")
-            return False
+        logger.info(f"Deleted item: {item_id} for user: {user_id}")
+        return True
 
     # ------------------------------------------------------------------
     # Tag management (per-item)
@@ -443,39 +477,64 @@ class ItemService:
         location_id: Optional[str] = None,
         tags: List[str] = None,
         use_by_date_start: Optional[str] = None,
-        use_by_date_end: Optional[str] = None
+        use_by_date_end: Optional[str] = None,
+        min_score: float = DEFAULT_MIN_SCORE
     ) -> List[Dict[str, Any]]:
-        """Advanced search for items for a specific user."""
-        # Start with the most selective available criterion.
+        """Advanced search for items for a specific user.
+
+        When ``name`` is given, items are fuzzy-matched by name (see
+        ``search.match_name``): each match carries a ``match`` object with a
+        relevance score and highlight spans, and results are ranked by score.
+        ``location_id``, ``tags`` and the date range are applied as filters on
+        top, independently of ``name`` (so "milk in the fridge" narrows by both).
+        """
         if name:
-            items = self.search_items_by_name(user_id, name)
+            # Fuzzy name search loads the user's partition and ranks in memory.
+            items = []
+            for item in self.list_all_items(user_id):
+                match = match_name(item.get("name", ""), name, min_score)
+                if match is None:
+                    continue
+                item["match"] = match
+                items.append(item)
+            items.sort(key=lambda i: i["match"]["score"], reverse=True)
         elif location_id:
             items = self.get_items_by_location(user_id, location_id)
         else:
             items = self.list_all_items(user_id)
 
-        # Apply additional filters.
-        if location_id and not name:
-            items = [item for item in items if item["location_id"] == location_id]
+        # Structural filters apply regardless of whether a name query ran.
+        if location_id:
+            items = [item for item in items if item.get("location_id") == location_id]
 
         if tags:
+            # AND semantics: an item must carry every requested tag.
             wanted = {t.lower() for t in tags}
             items = [
                 item for item in items
-                if wanted & set(item.get("tags", []))
+                if wanted <= set(item.get("tags", []))
             ]
 
-        if use_by_date_start:
-            items = [
-                item for item in items
-                if item.get("use_by_date") and item["use_by_date"] >= use_by_date_start
-            ]
+        if use_by_date_start or use_by_date_end:
+            start = _parse_iso(use_by_date_start) if use_by_date_start else None
+            end = _parse_iso(use_by_date_end) if use_by_date_end else None
 
-        if use_by_date_end:
-            items = [
-                item for item in items
-                if item.get("use_by_date") and item["use_by_date"] <= use_by_date_end
-            ]
+            def _in_range(item: Dict[str, Any]) -> bool:
+                raw = item.get("use_by_date")
+                if not raw:
+                    return False
+                try:
+                    dt = _parse_iso(raw)
+                except (TypeError, ValueError):
+                    # Skip items with an unparseable stored date rather than erroring.
+                    return False
+                if start and dt < start:
+                    return False
+                if end and dt > end:
+                    return False
+                return True
+
+            items = [item for item in items if _in_range(item)]
 
         return items
 
@@ -496,12 +555,8 @@ class ItemService:
             requested_units: Optional dict mapping dimension type to desired unit
                             e.g., {"weight": "kg", "volume": "gallon"}
         """
-        if location_id:
-            items = self.get_items_by_location(user_id, location_id)
-        elif tag:
-            items = self.get_items_by_tag(user_id, tag)
-        else:
-            items = self.list_all_items(user_id)
+        # location and tag stack (AND) when both are supplied.
+        items = self.list_items(user_id, location_id, tag)
 
         total_items = len(items)
         items_with_expiry = sum(1 for item in items if item.get("use_by_date"))
@@ -544,6 +599,11 @@ class ItemService:
         for dim in dimensions:
             if not validate_dimension(dim.get("dimension_type"), dim.get("unit")):
                 raise ValueError(f"Invalid dimension: {dim}")
+            # A dimension needs a numeric value; a missing/non-numeric value would
+            # otherwise fail late in Decimal() as an opaque 500.
+            value = dim.get("value")
+            if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+                raise ValueError(f"Invalid dimension value: {dim}")
 
         dim_types = [d.get("dimension_type") for d in dimensions]
         if len(dim_types) != len(set(dim_types)):

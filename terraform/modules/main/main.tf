@@ -33,10 +33,6 @@ module "items_table" {
     {
       name = "use_by_date"
       type = "S"
-    },
-    {
-      name = "item_name"
-      type = "S"
     }
   ]
 
@@ -51,12 +47,6 @@ module "items_table" {
       name            = "UseByDateIndex"
       hash_key        = "user_id"
       range_key       = "use_by_date"
-      projection_type = "ALL"
-    },
-    {
-      name            = "ItemNameIndex"
-      hash_key        = "user_id"
-      range_key       = "item_name"
       projection_type = "ALL"
     }
   ]

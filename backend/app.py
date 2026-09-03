@@ -6,6 +6,7 @@ It uses AWS Lambda Powertools for structured logging, tracing, and metrics.
 """
 
 import os
+from datetime import datetime
 from typing import Dict, Any
 
 import boto3
@@ -15,7 +16,7 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 
 from services import ItemService, LocationService, TagService
-from auth import get_effective_user_id
+from auth import get_effective_user_id, AuthenticationError
 
 # Initialize Powertools utilities
 logger = Logger()
@@ -66,6 +67,9 @@ def create_location():
         )
         metrics.add_metric(name="LocationCreated", unit="Count", value=1)
         return {"location": location}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -83,6 +87,9 @@ def list_locations():
         user_id = _current_user_id()
         locations = location_service.list_locations(user_id)
         return {"locations": locations}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -101,6 +108,9 @@ def get_location(location_id: str):
         if not location:
             return {"error": "Location not found"}, 404
         return {"location": location}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -121,6 +131,9 @@ def update_location(location_id: str):
             return {"error": "Location not found"}, 404
         metrics.add_metric(name="LocationUpdated", unit="Count", value=1)
         return {"location": location}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -140,6 +153,9 @@ def delete_location(location_id: str):
             return {"error": "Location not found"}, 404
         metrics.add_metric(name="LocationDeleted", unit="Count", value=1)
         return {"message": "Location deleted successfully"}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -168,17 +184,24 @@ def create_item():
         if missing:
             return {"error": f"Missing required field(s): {', '.join(missing)}"}, 400
 
+        tags = data.get('tags', [])
+        if not isinstance(tags, list):
+            return {"error": "Invalid value for 'tags': must be a list"}, 400
+
         item = item_service.create_item(
             user_id=user_id,
             name=data['name'],
             location_id=data['location_id'],
             dimensions=data.get('dimensions', []),
             use_by_date=data.get('use_by_date'),
-            tags=data.get('tags', []),
+            tags=tags,
             notes=data.get('notes', '')
         )
         metrics.add_metric(name="ItemCreated", unit="Count", value=1)
         return {"item": item}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -201,18 +224,14 @@ def list_items():
 
         location_id = query_params.get('location_id')
         tag = query_params.get('tag')
-        name = query_params.get('name')
 
-        if location_id:
-            items = item_service.get_items_by_location(user_id, location_id)
-        elif tag:
-            items = item_service.get_items_by_tag(user_id, tag)
-        elif name:
-            items = item_service.search_items_by_name(user_id, name)
-        else:
-            items = item_service.list_all_items(user_id)
+        # location_id and tag stack (AND) when both are supplied.
+        items = item_service.list_items(user_id, location_id, tag)
 
         return {"items": items}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -234,9 +253,14 @@ def get_expiring_items():
             days = int(query_params.get('days', 7))
         except (TypeError, ValueError):
             return {"error": "Invalid value for 'days': must be an integer"}, 400
+        if days < 0:
+            return {"error": "'days' must be non-negative"}, 400
 
         items = item_service.get_expiring_items(user_id, location_id, days)
         return {"items": items}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -255,6 +279,9 @@ def get_item_tags(item_id: str):
         if tags is None:
             return {"error": "Item not found"}, 404
         return {"tags": tags}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -279,6 +306,9 @@ def add_item_tags(item_id: str):
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemTagsAdded", unit="Count", value=1)
         return {"tags": result}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -298,6 +328,9 @@ def remove_item_tag(item_id: str, tag: str):
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemTagRemoved", unit="Count", value=1)
         return {"tags": result}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -316,6 +349,9 @@ def get_item(item_id: str):
         if not item:
             return {"error": "Item not found"}, 404
         return {"item": item}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -331,11 +367,16 @@ def update_item(item_id: str):
     try:
         user_id = _current_user_id()
         data = app.current_event.json_body or {}
+        if 'tags' in data and not isinstance(data['tags'], list):
+            return {"error": "Invalid value for 'tags': must be a list"}, 400
         item = item_service.update_item(user_id, item_id, data)
         if not item:
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemUpdated", unit="Count", value=1)
         return {"item": item}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -358,6 +399,9 @@ def delete_item(item_id: str):
             return {"error": "Item not found"}, 404
         metrics.add_metric(name="ItemDeleted", unit="Count", value=1)
         return {"message": "Item deleted successfully"}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -378,6 +422,9 @@ def list_tags():
         user_id = _current_user_id()
         tags = item_service.list_all_tags(user_id)
         return {"tags": tags}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
@@ -397,18 +444,53 @@ def search_items():
     try:
         user_id = _current_user_id()
         data = app.current_event.json_body or {}
-        items = item_service.search_items(
+
+        # Optional fuzzy-match threshold for name search; must be in (0, 1].
+        min_score = data.get('min_score')
+        if min_score is not None:
+            try:
+                min_score = float(min_score)
+            except (TypeError, ValueError):
+                return {"error": "Invalid value for 'min_score': must be a number"}, 400
+            if not 0 < min_score <= 1:
+                return {"error": "'min_score' must be between 0 (exclusive) and 1"}, 400
+
+        tags = data.get('tags', [])
+        if not isinstance(tags, list):
+            return {"error": "Invalid value for 'tags': must be a list"}, 400
+
+        # Validate the date-range bounds as ISO-8601; malformed values would
+        # otherwise silently mis-filter.
+        for field in ('use_by_date_start', 'use_by_date_end'):
+            value = data.get(field)
+            if value is not None:
+                try:
+                    datetime.fromisoformat(value)
+                except (TypeError, ValueError):
+                    return {"error": f"Invalid value for '{field}': must be an ISO-8601 date"}, 400
+
+        search_kwargs = dict(
             user_id=user_id,
             name=data.get('name'),
             location_id=data.get('location_id'),
-            tags=data.get('tags', []),
+            tags=tags,
             use_by_date_start=data.get('use_by_date_start'),
-            use_by_date_end=data.get('use_by_date_end')
+            use_by_date_end=data.get('use_by_date_end'),
         )
+        if min_score is not None:
+            search_kwargs['min_score'] = min_score
+
+        items = item_service.search_items(**search_kwargs)
         return {"items": items}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error searching items: {str(e)}")
+        return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error searching items")
         return {"error": str(e)}, 500
@@ -435,6 +517,9 @@ def get_aggregate_stats():
 
         stats = item_service.get_aggregate_stats(user_id, location_id, tag, requested_units or None)
         return {"stats": stats}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403

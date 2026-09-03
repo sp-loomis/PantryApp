@@ -9,6 +9,15 @@ from aws_lambda_powertools import Logger
 logger = Logger(child=True)
 
 
+class AuthenticationError(PermissionError):
+    """Raised when a request carries no valid identity (missing/invalid ``sub``).
+
+    Subclasses ``PermissionError`` so existing ``except PermissionError`` handlers
+    still catch it, but lets routes distinguish "not authenticated" (401) from
+    "authenticated but not authorized" (403).
+    """
+
+
 def get_user_id_from_event(event: Dict[str, Any]) -> Optional[str]:
     """
     Extract the user ID (sub claim) from the API Gateway event.
@@ -92,7 +101,7 @@ def get_effective_user_id(event: Dict[str, Any], requested_user_id: Optional[str
     authenticated_user_id = get_user_id_from_event(event)
 
     if not authenticated_user_id:
-        raise PermissionError("User not authenticated")
+        raise AuthenticationError("User not authenticated")
 
     # If no specific user requested, use authenticated user
     if not requested_user_id:

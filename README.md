@@ -254,12 +254,15 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 
 #### List Items
 
-**API Endpoint:** `GET /items[?location_id=<id>&tag=<tag>&name=<name>]`
+**API Endpoint:** `GET /items[?location_id=<id>&tag=<tag>]`
 
 **CLI Command:**
 ```bash
-./pantry_cli.py item list [--location <location_id>] [--tag <tag>] [--name <name>]
+./pantry_cli.py item list [--location <location_id>] [--tag <tag>]
 ```
+
+> Name search moved to `POST /search` (fuzzy & ranked). `GET /items` exposes only
+> the structural `location`/`tag` filters.
 
 **Output:**
 ```json
@@ -383,8 +386,17 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ./pantry_cli.py search \
   [--name <name>] [--location <location_id>] \
   [--tags <tag1,tag2>] \
-  [--use-by-start <YYYY-MM-DD>] [--use-by-end <YYYY-MM-DD>]
+  [--use-by-start <YYYY-MM-DD>] [--use-by-end <YYYY-MM-DD>] \
+  [--min-score <0-1>]
 ```
+
+Name matching is **fuzzy, multi-word, and order-independent**: the query is split
+into terms and *every* term must match some word of the item name (by substring or
+typo-tolerant similarity), so `--name "milk whole"` matches "Whole Milk". Results are
+**ranked by relevance**, and each matched item carries a `match` object with the score
+and whole-word highlight spans (character offsets into `name`) for the UI. `--min-score`
+tunes the fuzzy threshold (default `0.7`); the other criteria are applied as filters on
+top of the name match.
 
 **Input:**
 ```json
@@ -393,18 +405,20 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
   "location_id": "loc_abc123",
   "tags": ["meat", "frozen"],
   "use_by_date_start": "2024-01-01",
-  "use_by_date_end": "2024-12-31"
+  "use_by_date_end": "2024-12-31",
+  "min_score": 0.7
 }
 ```
 
-**Output:**
+**Output:** (`match` present only when `name` was supplied)
 ```json
 {
   "items": [
     {
       "item_id": "item_xyz789",
       "name": "Ground Beef",
-      ...
+      "match": { "score": 1.0, "spans": [{ "start": 7, "end": 11 }] },
+      "...": "..."
     }
   ]
 }
@@ -475,7 +489,6 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 - **GSIs**:
   - `LocationIndex`: Query items by location
   - `UseByDateIndex`: Query items by expiration date
-  - `ItemNameIndex`: Search items by name
 
 #### Locations Table
 - **Primary Key**: `location_id` (hash)

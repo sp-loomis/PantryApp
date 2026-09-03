@@ -59,12 +59,10 @@ def create_tables(dynamodb) -> None:
             {"AttributeName": "item_id", "AttributeType": "S"},
             {"AttributeName": "location_id", "AttributeType": "S"},
             {"AttributeName": "use_by_date", "AttributeType": "S"},
-            {"AttributeName": "item_name", "AttributeType": "S"},
         ],
         GlobalSecondaryIndexes=[
             _gsi("LocationIndex", "user_id", "location_id"),
             _gsi("UseByDateIndex", "user_id", "use_by_date"),
-            _gsi("ItemNameIndex", "user_id", "item_name"),
         ],
     )
     dynamodb.create_table(

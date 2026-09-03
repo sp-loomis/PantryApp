@@ -27,7 +27,6 @@ All DynamoDB tables have been refactored to use `user_id` (Cognito `sub` claim) 
 - **GSIs**:
   - LocationIndex: `user_id` (PK), `location_id` (SK)
   - UseByDateIndex: `user_id` (PK), `use_by_date` (SK)
-  - ItemNameIndex: `user_id` (PK), `item_name` (SK)
 
 #### Locations Table
 - **Primary Key**: `user_id` (PK), `location_id` (SK)

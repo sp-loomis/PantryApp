@@ -47,7 +47,6 @@ class Item:
     item_id: str
     name: str
     location_id: str
-    item_name: str  # Normalized name for searching
     dimensions: List[Dict[str, Any]] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)  # Denormalized tags for read efficiency
     use_by_date: Optional[str] = None
@@ -72,7 +71,6 @@ class Item:
             item_id=str(uuid.uuid4()),
             name=name,
             location_id=location_id,
-            item_name=name.lower(),  # Normalized for searching
             dimensions=dimensions or [],
             tags=tags or [],
             use_by_date=use_by_date,
@@ -86,7 +84,6 @@ class Item:
             "item_id": self.item_id,
             "name": self.name,
             "location_id": self.location_id,
-            "item_name": self.item_name,
             "tags": self.tags,
             "use_by_date": self.use_by_date,
             "notes": self.notes,

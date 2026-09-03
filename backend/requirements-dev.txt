@@ -1,0 +1,11 @@
+# Development / test dependencies.
+#
+# In production, aws-lambda-powertools is supplied by an AWS-managed Lambda
+# layer and boto3 by the Lambda runtime (see terraform/modules/main/main.tf),
+# so neither is in requirements.txt. Tests run outside Lambda, so we install
+# them (plus mocking + a test runner) here.
+aws-lambda-powertools>=3.0.0
+aws-xray-sdk>=2.12.0
+boto3>=1.34.0
+moto>=5.0.0
+pytest>=8.0.0

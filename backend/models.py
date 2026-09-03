@@ -48,11 +48,8 @@ class Item:
     name: str
     location_id: str
     item_name: str  # Normalized name for searching
-    # Legacy fields for backward compatibility
-    quantity: float = 1.0
-    unit: str = "unit"
-    # New dimension support
     dimensions: List[Dict[str, Any]] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)  # Denormalized tags for read efficiency
     use_by_date: Optional[str] = None
     notes: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -64,9 +61,8 @@ class Item:
         user_id: str,
         name: str,
         location_id: str,
-        quantity: float = 1.0,
-        unit: str = "unit",
         dimensions: List[Dict[str, Any]] = None,
+        tags: List[str] = None,
         use_by_date: Optional[str] = None,
         notes: str = ""
     ) -> "Item":
@@ -77,9 +73,8 @@ class Item:
             name=name,
             location_id=location_id,
             item_name=name.lower(),  # Normalized for searching
-            quantity=quantity,
-            unit=unit,
             dimensions=dimensions or [],
+            tags=tags or [],
             use_by_date=use_by_date,
             notes=notes
         )
@@ -92,8 +87,7 @@ class Item:
             "name": self.name,
             "location_id": self.location_id,
             "item_name": self.item_name,
-            "quantity": self.quantity,
-            "unit": self.unit,
+            "tags": self.tags,
             "use_by_date": self.use_by_date,
             "notes": self.notes,
             "created_at": self.created_at,

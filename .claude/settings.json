@@ -1,14 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "mcp__github__*",
-      "Bash(git *)",
-      "Bash(gh *)",
-      "Bash(npm *)",
-      "Bash(gemini *)",
-      "WebSearch",
-      "WebFetch"
-    ]
+    "allow": ["mcp__github__*", "Bash(git *)", "Bash(gh *)", "Bash(npm *)", "WebSearch", "WebFetch"]
   },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"

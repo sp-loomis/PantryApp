@@ -110,24 +110,17 @@ module "item_tags_table" {
     {
       name = "tag_name"
       type = "S"
-    },
-    {
-      name = "item_id"
-      type = "S"
     }
   ]
 
+  # TagIndex supports reverse lookups (items-by-tag) and listing all of a
+  # user's tags. Tags are also denormalized onto each item record, so no
+  # per-item index is needed to read an item's tags.
   global_secondary_indexes = [
     {
       name            = "TagIndex"
       hash_key        = "user_id"
       range_key       = "tag_name"
-      projection_type = "ALL"
-    },
-    {
-      name            = "ItemTagsIndex"
-      hash_key        = "user_id"
-      range_key       = "item_id"
       projection_type = "ALL"
     }
   ]
@@ -192,14 +185,14 @@ data "aws_region" "current" {}
 module "api_lambda" {
   source = "../lambda_function"
 
-  function_name  = "${var.name_prefix}-lambda-core-api"
-  environment    = var.environment
-  source_dir     = "${path.module}/../../../backend"
-  handler        = "app.lambda_handler"
-  runtime        = var.lambda_runtime
-  timeout        = var.lambda_timeout
-  memory_size    = var.lambda_memory_size
-  role_arn       = module.lambda_role.role_arn
+  function_name      = "${var.name_prefix}-lambda-core-api"
+  environment        = var.environment
+  source_dir         = "${path.module}/../../../backend"
+  handler            = "app.lambda_handler"
+  runtime            = var.lambda_runtime
+  timeout            = var.lambda_timeout
+  memory_size        = var.lambda_memory_size
+  role_arn           = module.lambda_role.role_arn
   log_retention_days = var.log_retention_days
 
   # AWS Powertools Lambda Layer (Python 3.11)
@@ -210,12 +203,12 @@ module "api_lambda" {
   ]
 
   environment_variables = {
-    ITEMS_TABLE_NAME      = module.items_table.table_name
-    LOCATIONS_TABLE_NAME  = module.locations_table.table_name
-    ITEM_TAGS_TABLE_NAME  = module.item_tags_table.table_name
-    COGNITO_USER_POOL_ID  = module.cognito_pool.user_pool_id
-    COGNITO_CLIENT_ID     = module.cognito_pool.user_pool_client_id
-    ENVIRONMENT           = var.environment
+    ITEMS_TABLE_NAME     = module.items_table.table_name
+    LOCATIONS_TABLE_NAME = module.locations_table.table_name
+    ITEM_TAGS_TABLE_NAME = module.item_tags_table.table_name
+    COGNITO_USER_POOL_ID = module.cognito_pool.user_pool_id
+    COGNITO_CLIENT_ID    = module.cognito_pool.user_pool_client_id
+    ENVIRONMENT          = var.environment
   }
 
   tags = var.env_tags

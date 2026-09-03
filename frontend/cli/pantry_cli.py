@@ -224,8 +224,6 @@ def item():
 @item.command(name='add')
 @click.option('--name', required=True, help='Item name')
 @click.option('--location', required=True, help='Location ID')
-@click.option('--quantity', type=float, default=1.0, help='Quantity (legacy)')
-@click.option('--unit', default='unit', help='Unit of measurement (legacy)')
 @click.option('--count', type=float, help='Count dimension value')
 @click.option('--weight', type=float, help='Weight dimension value')
 @click.option('--weight-unit', default='lb', help='Weight unit (g, kg, oz, lb)')
@@ -234,15 +232,13 @@ def item():
 @click.option('--use-by', help='Use-by date (YYYY-MM-DD)')
 @click.option('--tags', help='Comma-separated tags')
 @click.option('--notes', default='', help='Additional notes')
-def add_item(name: str, location: str, quantity: float, unit: str, count: Optional[float],
+def add_item(name: str, location: str, count: Optional[float],
              weight: Optional[float], weight_unit: str, volume: Optional[float], volume_unit: str,
              use_by: Optional[str], tags: Optional[str], notes: str):
     """Add a new inventory item with optional dimensions."""
     item_data = {
         'name': name,
         'location_id': location,
-        'quantity': quantity,
-        'unit': unit,
         'notes': notes
     }
 
@@ -328,8 +324,6 @@ def get_item(item_id: str):
 @click.argument('item_id')
 @click.option('--name', help='New item name')
 @click.option('--location', help='New location ID')
-@click.option('--quantity', type=float, help='New quantity (legacy)')
-@click.option('--unit', help='New unit (legacy)')
 @click.option('--count', type=float, help='Count dimension value')
 @click.option('--weight', type=float, help='Weight dimension value')
 @click.option('--weight-unit', help='Weight unit (g, kg, oz, lb)')
@@ -338,8 +332,8 @@ def get_item(item_id: str):
 @click.option('--use-by', help='New use-by date (YYYY-MM-DD)')
 @click.option('--tags', help='New comma-separated tags')
 @click.option('--notes', help='New notes')
-def update_item(item_id: str, name: Optional[str], location: Optional[str], quantity: Optional[float],
-                unit: Optional[str], count: Optional[float], weight: Optional[float], weight_unit: Optional[str],
+def update_item(item_id: str, name: Optional[str], location: Optional[str],
+                count: Optional[float], weight: Optional[float], weight_unit: Optional[str],
                 volume: Optional[float], volume_unit: Optional[str], use_by: Optional[str],
                 tags: Optional[str], notes: Optional[str]):
     """Update an inventory item, including dimensions."""
@@ -349,10 +343,6 @@ def update_item(item_id: str, name: Optional[str], location: Optional[str], quan
         updates['name'] = name
     if location:
         updates['location_id'] = location
-    if quantity is not None:
-        updates['quantity'] = quantity
-    if unit:
-        updates['unit'] = unit
 
     # Build dimensions array if any dimension option is provided
     has_dimension_update = count is not None or weight is not None or volume is not None
@@ -425,6 +415,60 @@ def expiring_items(location: Optional[str], days: int):
         query_params['location_id'] = location
 
     result = invoke_lambda('GET', '/items/expiring', query_params=query_params)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@item.command(name='tags')
+@click.argument('item_id')
+def item_tags(item_id: str):
+    """Show the tags for a specific item."""
+    result = invoke_lambda('GET', f'/items/{item_id}/tags')
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@item.command(name='tag-add')
+@click.argument('item_id')
+@click.option('--tags', required=True, help='Comma-separated tags to add')
+def item_tag_add(item_id: str, tags: str):
+    """Add one or more tags to an item."""
+    tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+    result = invoke_lambda('POST', f'/items/{item_id}/tags', {'tags': tag_list})
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@item.command(name='tag-remove')
+@click.argument('item_id')
+@click.argument('tag')
+def item_tag_remove(item_id: str, tag: str):
+    """Remove a single tag from an item."""
+    result = invoke_lambda('DELETE', f'/items/{item_id}/tags/{tag}')
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+# ============================================================================
+# Tag Commands
+# ============================================================================
+
+@cli.command(name='tags')
+def list_tags():
+    """List all distinct tags across your inventory."""
+    result = invoke_lambda('GET', '/tags')
 
     print(json.dumps(result, indent=2))
 

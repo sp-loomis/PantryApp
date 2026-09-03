@@ -19,18 +19,13 @@ You are the **Lead Developer and Architect** for this project. Your responsibili
 ### When Processing Issues
 
 1. **Analyze Requirements**: Carefully read the issue description and understand the requirements
-2. **Research Codebase**: Use Gemini CLI (read-only) to understand existing patterns and architecture
-   ```bash
-   gemini -p "@./ How is [specific pattern] implemented in this codebase?"
-   gemini -p "@src/ @lib/ What is the current architecture for [feature]?"
-   ```
-3. **Design Solution**: Plan your approach considering:
+2. **Design Solution**: Plan your approach considering:
    - Existing patterns and conventions
    - Impact on other components
    - Affected code owners
    - Testing requirements
-4. **Implement**: Write clean, well-documented code following project conventions
-5. **Create PR**: You MUST automatically create a Pull Request after pushing your changes.
+3. **Implement**: Write clean, well-documented code following project conventions
+4. **Create PR**: You MUST automatically create a Pull Request after pushing your changes.
    - Do not ask for confirmation; just create the PR.
    - Provide a clear description of changes.
    - Notify affected code owners (mentioned in comments).
@@ -39,10 +34,9 @@ You are the **Lead Developer and Architect** for this project. Your responsibili
 ### When Responding to PR Reviews
 
 1. **Read Feedback**: Carefully understand the reviewer's concerns or suggestions
-2. **Consult Codebase**: Use Gemini CLI if you need more context about the codebase
-3. **Make Changes**: Address the feedback professionally and thoroughly
-4. **Communicate**: If you disagree with feedback, explain your reasoning respectfully
-5. **Update PR**: Push changes to the same branch
+2. **Make Changes**: Address the feedback professionally and thoroughly
+3. **Communicate**: If you disagree with feedback, explain your reasoning respectfully
+4. **Update PR**: Push changes to the same branch
 
 ## Code Owner Notifications
 
@@ -67,7 +61,6 @@ The following files are owned by @sp-loomis and require special attention:
 - `.github/workflows/*` - GitHub Actions workflows
 - `.claude/CLAUDE.md` - Your instructions (this file)
 - `.claude/settings.json` - Claude Code configuration
-- `GEMINI.md` - Gemini CLI instructions
 - `CODEOWNERS` - Code ownership definitions
 
 You CAN edit these files if necessary, but:
@@ -85,24 +78,6 @@ You are **STRICTLY PROHIBITED** from pushing directly to the `dev` branch under 
 1. Be made on a feature/issue branch
 2. Go through a pull request targeting `dev`
 3. Be reviewed before merging
-
-### Gemini CLI Usage
-
-Use Gemini CLI **ONLY** as a read-only subject matter expert:
-
-```bash
-# ✅ ALLOWED - Read-only analysis
-gemini -p "@src/ Explain the authentication flow"
-gemini -p "@./ What testing framework is used?"
-gemini -p "@lib/ @utils/ How are errors handled?"
-```
-
-Gemini CLI helps you:
-
-- Understand large codebases without exceeding context limits
-- Find existing implementations before reinventing
-- Verify patterns and conventions
-- Locate relevant files and functions
 
 ## CLI/API Alignment Standards
 
@@ -172,7 +147,6 @@ def add_item(name: str, location: str, quantity: float):
 
 ## Best Practices
 
-1. **Use Gemini First**: Before implementing, ask Gemini if similar functionality exists
 2. **Follow Patterns**: Match existing code style and architectural patterns
 3. **Test Thoroughly**: Include tests for new functionality
 4. **Document**: Add clear comments and update documentation
@@ -188,10 +162,6 @@ def add_item(name: str, location: str, quantity: float):
 # (Read issue #42: "Add user authentication")
 
 # 2. Research existing code
-gemini -p "@src/ @lib/ Is there existing authentication? What patterns are used?"
-
-# 3. Check for similar implementations
-gemini -p "@./ Show me all middleware and how they're structured"
 
 # 4. Implement solution
 # (Write code following discovered patterns)

@@ -54,22 +54,13 @@ function SidebarLink({ item, active }) {
 
 function BottomTab({ item, active }) {
   const IconCmp = item.icon;
-  // The Add tab is visually accented as the primary action.
+  // The Add tab is visually accented as the primary action (add-circle icon in
+  // brand color, sized up so it stands out among the tabs).
   if (item.accent) {
     return (
       <NavLink to={item.to} aria-label={item.label}>
-        <VStack spacing={0} justify="center" minW="56px" minH="56px">
-          <Flex
-            align="center"
-            justify="center"
-            boxSize="44px"
-            borderRadius="full"
-            bg="brand.500"
-            color="white"
-            boxShadow="md"
-          >
-            <IconCmp boxSize={6} />
-          </Flex>
+        <VStack spacing={0} justify="center" minW="56px" minH="56px" color="brand.500">
+          <IconCmp boxSize={9} />
         </VStack>
       </NavLink>
     );

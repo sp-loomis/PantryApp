@@ -1,69 +1,46 @@
 /**
  * TagInput
  *
- * Lightweight tag editor: type a tag, press Enter or comma (or Add) to append;
- * tags render as removable chips. Tags are lowercased to match backend storage.
+ * Creatable, autocompleting multi-tag editor for the item form. Suggests
+ * existing tags (GET /tags) and lets you create new ones. Tags are lowercased
+ * and de-duplicated to match backend storage.
+ *
+ * External API is unchanged: `tags` (string[]) + `onChange(string[])`.
  */
 
-import { useState } from 'react';
-import {
-  Box,
-  HStack,
-  Input,
-  Button,
-  Tag,
-  TagLabel,
-  TagCloseButton,
-  Wrap,
-  WrapItem,
-} from '@chakra-ui/react';
+import { useEffect, useState } from 'react';
+import { CreatableSelect } from 'chakra-react-select';
+import { listTags } from '@pantry-app/shared';
 
 export default function TagInput({ tags, onChange }) {
-  const [draft, setDraft] = useState('');
+  const [options, setOptions] = useState([]);
 
-  const addTag = () => {
-    const next = draft.trim().toLowerCase();
-    if (next && !tags.includes(next)) {
-      onChange([...tags, next]);
-    }
-    setDraft('');
-  };
+  useEffect(() => {
+    listTags()
+      .then((all) => setOptions(all.map((t) => ({ value: t, label: t }))))
+      .catch(() => setOptions([]));
+  }, []);
 
-  const removeTag = (tag) => onChange(tags.filter((t) => t !== tag));
+  const value = tags.map((t) => ({ value: t, label: t }));
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      addTag();
-    }
+  const handleChange = (selected) => {
+    const next = (selected || [])
+      .map((opt) => opt.value.trim().toLowerCase())
+      .filter(Boolean);
+    onChange([...new Set(next)]);
   };
 
   return (
-    <Box>
-      <HStack>
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Add a tag"
-        />
-        <Button onClick={addTag} variant="outline" flexShrink={0}>
-          Add
-        </Button>
-      </HStack>
-
-      {tags.length > 0 && (
-        <Wrap mt={2} spacing={2}>
-          {tags.map((tag) => (
-            <WrapItem key={tag}>
-              <Tag colorScheme="brand" variant="subtle" size="md">
-                <TagLabel>{tag}</TagLabel>
-                <TagCloseButton onClick={() => removeTag(tag)} />
-              </Tag>
-            </WrapItem>
-          ))}
-        </Wrap>
-      )}
-    </Box>
+    <CreatableSelect
+      isMulti
+      options={options}
+      value={value}
+      onChange={handleChange}
+      placeholder="Add tags"
+      formatCreateLabel={(input) => `Add "${input.trim().toLowerCase()}"`}
+      // Keep the created tag lowercased in the menu option.
+      createOptionPosition="first"
+      size="md"
+    />
   );
 }

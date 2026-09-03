@@ -57,6 +57,15 @@ def main() -> None:
         dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE)
     )
 
+    # Idempotency guard: seeding creates fresh (uuid-keyed) records every run, so
+    # re-running would duplicate data. Skip if this user already has locations.
+    if location_service.list_locations(DEV_USER_ID):
+        print(
+            f"User '{DEV_USER_ID}' already has data — skipping seed.\n"
+            "To reset: `docker compose down -v` then re-run this script."
+        )
+        return
+
     pantry = location_service.create_location(
         DEV_USER_ID, "Kitchen Pantry", "Dry goods and canned food"
     )

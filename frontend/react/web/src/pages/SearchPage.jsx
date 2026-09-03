@@ -1,8 +1,10 @@
 /**
  * SearchPage — the app home.
  *
- * Fuzzy-name search over all items with location / tag / expiring filters.
+ * Fuzzy-name search over all items with location / tag / expiry filters.
  * An empty query browses everything. Results come from POST /search.
+ * Tags filter is multi-select (AND semantics); expiry can be a preset span
+ * ("within 2 weeks") or a specific date.
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -11,7 +13,6 @@ import {
   Box,
   Button,
   Center,
-  Checkbox,
   Flex,
   HStack,
   Input,
@@ -24,6 +25,7 @@ import {
   Wrap,
   WrapItem,
 } from '@chakra-ui/react';
+import { Select as MultiSelect } from 'chakra-react-select';
 import { searchItems, listTags } from '@pantry-app/shared';
 import { useInventoryContext } from '../contexts/InventoryContext';
 import LocationSelect from '../components/LocationSelect';
@@ -32,17 +34,33 @@ import EmptyState from '../components/EmptyState';
 import ErrorMessage from '../components/ErrorMessage';
 import { SearchIcon, PlusIcon } from '../components/icons';
 
-const EXPIRING_WINDOW_DAYS = 7;
+// Preset expiry spans (days from today). 'custom' reveals a date picker.
+const EXPIRY_PRESETS = [
+  { value: '3', label: 'Within 3 days' },
+  { value: '7', label: 'Within 1 week' },
+  { value: '14', label: 'Within 2 weeks' },
+  { value: '30', label: 'Within 1 month' },
+  { value: 'custom', label: 'By a date…' },
+];
+
+/** Local YYYY-MM-DD (the backend accepts date-only ISO and rejects a trailing Z). */
+function toLocalYMD(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
 export default function SearchPage() {
   const { locationName } = useInventoryContext();
 
   const [name, setName] = useState('');
   const [locationId, setLocationId] = useState('');
-  const [tag, setTag] = useState('');
-  const [expiring, setExpiring] = useState(false);
+  const [selectedTags, setSelectedTags] = useState([]); // option objects
+  const [expiryPreset, setExpiryPreset] = useState(''); // '' | '3' | ... | 'custom'
+  const [expiryDate, setExpiryDate] = useState(''); // YYYY-MM-DD when custom
 
-  const [allTags, setAllTags] = useState([]);
+  const [tagOptions, setTagOptions] = useState([]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -50,20 +68,29 @@ export default function SearchPage() {
   // Load the tag list once for the tag filter.
   useEffect(() => {
     listTags()
-      .then(setAllTags)
-      .catch(() => setAllTags([]));
+      .then((all) => setTagOptions(all.map((t) => ({ value: t, label: t }))))
+      .catch(() => setTagOptions([]));
   }, []);
+
+  // Resolve the expiry filter to a date-only upper bound, or null.
+  const expiryEnd = useCallback(() => {
+    if (expiryPreset === 'custom') return expiryDate || null;
+    if (expiryPreset) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(expiryPreset));
+      return toLocalYMD(d);
+    }
+    return null;
+  }, [expiryPreset, expiryDate]);
 
   const runSearch = useCallback(async () => {
     const criteria = {};
     if (name.trim()) criteria.name = name.trim();
     if (locationId) criteria.location_id = locationId;
-    if (tag) criteria.tags = [tag];
-    if (expiring) {
-      criteria.use_by_date_end = new Date(
-        Date.now() + EXPIRING_WINDOW_DAYS * 24 * 60 * 60 * 1000
-      ).toISOString();
-    }
+    if (selectedTags.length) criteria.tags = selectedTags.map((o) => o.value);
+    const end = expiryEnd();
+    if (end) criteria.use_by_date_end = end;
+
     try {
       setLoading(true);
       setError(null);
@@ -73,7 +100,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [name, locationId, tag, expiring]);
+  }, [name, locationId, selectedTags, expiryEnd]);
 
   // Debounce so typing does not fire a request per keystroke.
   useEffect(() => {
@@ -81,16 +108,16 @@ export default function SearchPage() {
     return () => clearTimeout(handle);
   }, [runSearch]);
 
-  const hasFilters = Boolean(name || locationId || tag || expiring);
+  const hasFilters = Boolean(
+    name || locationId || selectedTags.length || expiryEnd()
+  );
 
   return (
     <Box>
       <Flex align="center" justify="space-between" mb={4} gap={3}>
-        <Box>
-          <Text fontSize="2xl" fontWeight="bold">
-            Pantry
-          </Text>
-        </Box>
+        <Text fontSize="2xl" fontWeight="bold">
+          Pantry
+        </Text>
         <Button as={RouterLink} to="/items/new" leftIcon={<PlusIcon boxSize={4} />}>
           Add item
         </Button>
@@ -120,25 +147,43 @@ export default function SearchPage() {
             />
           </WrapItem>
           <WrapItem>
+            <Box minW="220px">
+              <MultiSelect
+                isMulti
+                options={tagOptions}
+                value={selectedTags}
+                onChange={(selected) => setSelectedTags(selected || [])}
+                placeholder="All tags"
+                size="md"
+              />
+            </Box>
+          </WrapItem>
+          <WrapItem>
             <Select
-              value={tag}
-              onChange={(e) => setTag(e.target.value)}
-              placeholder="All tags"
+              value={expiryPreset}
+              onChange={(e) => setExpiryPreset(e.target.value)}
+              placeholder="Any expiry"
               bg="white"
-              w="180px"
+              w="170px"
             >
-              {allTags.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              {EXPIRY_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
                 </option>
               ))}
             </Select>
           </WrapItem>
-          <WrapItem>
-            <Checkbox isChecked={expiring} onChange={(e) => setExpiring(e.target.checked)}>
-              Expiring soon
-            </Checkbox>
-          </WrapItem>
+          {expiryPreset === 'custom' && (
+            <WrapItem>
+              <Input
+                type="date"
+                value={expiryDate}
+                onChange={(e) => setExpiryDate(e.target.value)}
+                bg="white"
+                w="170px"
+              />
+            </WrapItem>
+          )}
         </Wrap>
       </VStack>
 

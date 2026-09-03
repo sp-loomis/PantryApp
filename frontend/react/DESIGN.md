@@ -1,14 +1,23 @@
-# React Authentication Frontend - Design Document
+# React Frontend - Design Document
 
-**Version:** 1.0
-**Date:** 2026-02-04
+**Version:** 2.0
+**Date:** 2026-09-03
 **Status:** Approved
+
+> **v2 (2026-09-03)** extends this document from an auth-only frontend to the full
+> **inventory management** app, built **mobile-first**. The authentication design
+> below (v1) is unchanged and still current. The inventory architecture — the
+> 3-tier environment model, the API service layer, the mobile nav shell, the
+> item/dimension model, and the feature/page map — is in the
+> **[Inventory Frontend (v2)](#inventory-frontend-v2)** section near the end.
 
 ## Overview
 
 ### Purpose
 
-Define the architecture for a React-based authentication frontend for Pantry App, supporting user signup, email confirmation, login, and logout with a focus on functionality over visual polish.
+Define the architecture for the React frontend of Pantry App: authentication
+(v1) and inventory management (v2 — locations, items, tags, search), with
+mobile-friendliness as a first-class design principle.
 
 ### Design Goals
 
@@ -27,13 +36,14 @@ Define the architecture for a React-based authentication frontend for Pantry App
 - Token management and auto-refresh
 - Responsive web interface
 - Shared business logic for future mobile
+- **Inventory management UI (v2):** locations, items, tags, search — mobile-first
 
 **Out of Scope:**
 - Password reset
 - Social authentication
 - MFA
 - User profile management
-- Inventory management UI
+- Aggregation / stats UI (deferred — see v2 section)
 
 ---
 
@@ -581,6 +591,100 @@ test: add login flow tests
 - Production builds successfully
 - Environment variables configurable
 - Deployable to S3 + CloudFront
+
+---
+
+## Inventory Frontend (v2)
+
+Extends the auth frontend into a full inventory app. **Core principle:
+mobile-first** — every screen is designed for a phone first and scales up.
+Business logic stays in `shared/` (usable by a future React Native app); only
+Chakra UI lives in `web/`.
+
+### Environment model — three tiers
+
+The frontend is tier-agnostic: it reads exactly two env vars and a pluggable
+token provider does the rest.
+
+| Tier | Frontend | Backend | Auth | Data |
+|------|----------|---------|------|------|
+| **1 — fully local** | `npm run dev` :5173 | Flask shim `backend/local_server.py` :8000 | dev-bypass stub (`VITE_AUTH_MODE=local`) | DynamoDB Local :8001 + `seed_local.py` |
+| **2 — local FE → remote dev BE** | `npm run dev` | deployed dev API Gateway | real dev Cognito | dev DynamoDB |
+| **3 — full deploy** | S3 + CloudFront (scale-to-zero static SPA) | API Gateway (REST) + Cognito authorizer | real Cognito | prod DynamoDB |
+
+- **`VITE_API_GATEWAY_URL`** — backend base URL.
+- **`VITE_AUTH_MODE`** — `local` (dev stub, no Cognito) or `cognito` (Amplify).
+- Vite loads `.env.development` (Tier-1 defaults) for `npm run dev`; override with
+  a git-ignored `.env.local` for Tier 2. See `LOCAL_DEV.md` for the dev loop.
+
+The **local backend shim** wraps the real Lambda handler (`app.lambda_handler`)
+in Flask, building the API Gateway REST event and injecting a fixed dev `sub`
+claim — **no backend app code changes**. It reuses the table schema and event
+shape already proven in `backend/tests/conftest.py`.
+
+> **Not yet built:** there is no deployed HTTP endpoint. Tiers 2 and 3 require an
+> API Gateway (REST) + Cognito authorizer in Terraform, and Tier 3 an S3 +
+> CloudFront hosting module — both deferred to a later phase.
+
+### API service layer
+
+- `shared/src/services/apiClient.js` — `request()` resolves the base URL,
+  attaches `Authorization: Bearer <token>`, parses the JSON envelope, and throws
+  `ApiError{message, status}` (the backend always returns `{ "error": "..." }`).
+- `shared/src/services/authTokens.js` — `getAuthToken()`: static dev token in
+  local mode; Cognito **ID token** via `fetchAuthSession()` otherwise (the
+  backend authorizer validates the ID token — see `AUTHENTICATION.md`).
+- `shared/src/services/inventoryService.js` — one function per endpoint,
+  unwrapping the response envelope.
+- `getCurrentAuthUser()` / `signOutUser()` are local-mode aware, so
+  `ProtectedRoute` and logout work fully offline in Tier 1.
+
+### Navigation — mobile-first AppShell
+
+One responsive shell (`web/src/components/AppShell.jsx`):
+- **mobile (base):** fixed **bottom tab bar** (thumb-reachable).
+- **desktop (lg+):** left **sidebar**.
+- Tabs: **Search · Locations · Tags · [ + Add ]**, driven by Chakra `{ base, lg }`
+  responsive props with ≥44px tap targets.
+
+### Feature / page map
+
+| Page | Purpose | Endpoint(s) |
+|------|---------|-------------|
+| Search (home `/`) | Fuzzy name search + location/tag/expiring filters; empty = browse all | `POST /search` |
+| Locations index | List locations | `GET /locations` |
+| Location detail | A location + its items; edit/delete | `GET /locations/<id>`, `GET /items?location_id=` |
+| Location form | Create / edit | `POST` / `PUT /locations` |
+| Item detail | Full item; links to location & tags; edit/delete | `GET /items/<id>` |
+| Item form | Create / edit (with the measure control) | `POST` / `PUT /items` |
+| Tags index | All tags | `GET /tags` |
+| Tag detail | Items with a tag | `GET /items?tag=` |
+
+"Expiring soon" is a **date filter** on Search (`use_by_date_end`), not a page.
+
+### Item & dimension model
+
+- Every item is **one unit** — count is **not** user-facing and is never sent
+  (the backend's user-editable count is slated for removal).
+- An item carries **one optional measure**: a **Weight ⇄ Volume** toggle → value
+  → unit (`DimensionField`). Valid units mirror `backend/dimensions.py`. An item
+  may be saved with no measure. Helpers live in `shared/src/utils/dimensions.js`.
+
+### State management
+
+`InventoryContext` (wrapping the `useInventory` hook) holds the app-wide
+locations list; item/search screens fetch with local state. React Context is
+sufficient at this scale; a caching layer (e.g. React Query) is a documented
+future upgrade if aggregation/live-refresh needs grow.
+
+### Deferred (next steps)
+
+- **Aggregation / stats** UI (`GET /aggregate`) — product direction TBD.
+- **Tier 3 infra:** API Gateway (REST) + Cognito authorizer; S3 + CloudFront
+  hosting — both in Terraform.
+- **Tier 2 wiring:** point local FE at remote dev BE; API Gateway CORS for
+  `http://localhost:5173`.
+- `cognito-local` for exercising real auth flows offline.
 
 ---
 

@@ -100,6 +100,45 @@ def test_create_item_non_list_tags_returns_400(api):
     assert "tags" in resp.body["error"].lower()
 
 
+def test_create_item_copies_returns_items_list(api):
+    resp = _make_item(api, tags=["Dairy"], copies=3)
+
+    assert resp.status_code == 201
+    # copies>1 returns an "items" list envelope (not the single "item").
+    assert "item" not in resp.body
+    items = resp.body["items"]
+    assert len(items) == 3
+    # Distinct ids, identical shared fields.
+    assert len({i["item_id"] for i in items}) == 3
+    for item in items:
+        assert item["name"] == "Milk"
+        assert item["location_id"] == "fridge"
+        assert item["tags"] == ["dairy"]
+
+
+def test_create_item_copies_one_returns_single_item(api):
+    # Explicit copies=1 preserves the single-item envelope.
+    resp = _make_item(api, copies=1)
+
+    assert resp.status_code == 201
+    assert "items" not in resp.body
+    assert resp.body["item"]["name"] == "Milk"
+
+
+def test_create_item_copies_zero_returns_400(api):
+    resp = _make_item(api, copies=0)
+
+    assert resp.status_code == 400
+    assert "copies" in resp.body["error"].lower()
+
+
+def test_create_item_copies_over_cap_returns_400(api):
+    resp = _make_item(api, copies=1000)
+
+    assert resp.status_code == 400
+    assert "copies" in resp.body["error"].lower()
+
+
 # ---------------------------------------------------------------------------
 # GET /items (with filters)
 # ---------------------------------------------------------------------------

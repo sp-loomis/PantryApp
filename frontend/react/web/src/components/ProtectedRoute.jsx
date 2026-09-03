@@ -6,7 +6,7 @@
  */
 
 import { Navigate } from 'react-router-dom';
-import { Box, Spinner, Center } from '@chakra-ui/react';
+import { Spinner, Center } from '@chakra-ui/react';
 import { useAuthContext } from '../contexts/AuthContext';
 
 export default function ProtectedRoute({ children }) {

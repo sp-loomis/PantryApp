@@ -6,6 +6,7 @@
  */
 
 import { signUp, confirmSignUp, signIn, signOut, getCurrentUser } from 'aws-amplify/auth';
+import { getAuthMode, LOCAL_DEV_USER } from '../config/env.js';
 
 /**
  * Sign up a new user with email and password
@@ -89,6 +90,10 @@ export async function signInUser(email, password) {
  * @throws {Error} If sign out fails
  */
 export async function signOutUser() {
+  // Local dev-bypass mode has no Cognito session to clear.
+  if (getAuthMode() === 'local') {
+    return;
+  }
   try {
     await signOut();
   } catch (error) {
@@ -102,6 +107,11 @@ export async function signOutUser() {
  * @returns {Promise<Object|null>} User object or null if not authenticated
  */
 export async function getCurrentAuthUser() {
+  // Local dev-bypass mode: report a fixed authenticated user without Cognito,
+  // so ProtectedRoute passes and the app is usable fully offline.
+  if (getAuthMode() === 'local') {
+    return { ...LOCAL_DEV_USER };
+  }
   try {
     const user = await getCurrentUser();
     return {

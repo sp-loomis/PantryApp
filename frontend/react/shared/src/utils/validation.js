@@ -86,3 +86,27 @@ export function validateVerificationCode(code) {
 
   return null;
 }
+
+/**
+ * Validate an inventory item name
+ * @param {string} name
+ * @returns {string|null} Error message or null if valid
+ */
+export function validateItemName(name) {
+  if (!name || !name.trim()) {
+    return 'Item name is required';
+  }
+  return null;
+}
+
+/**
+ * Validate a storage location name
+ * @param {string} name
+ * @returns {string|null} Error message or null if valid
+ */
+export function validateLocationName(name) {
+  if (!name || !name.trim()) {
+    return 'Location name is required';
+  }
+  return null;
+}

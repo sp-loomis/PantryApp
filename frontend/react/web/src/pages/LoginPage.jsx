@@ -16,7 +16,7 @@ import {
   Link,
   Text
 } from '@chakra-ui/react';
-import { validateEmail, validatePassword } from '@pantry-app/shared';
+import { validateEmail } from '@pantry-app/shared';
 import { useAuthContext } from '../contexts/AuthContext';
 import AuthLayout from '../components/AuthLayout';
 import ErrorMessage from '../components/ErrorMessage';
@@ -97,7 +97,7 @@ export default function LoginPage() {
           </Button>
 
           <Text>
-            Don't have an account?{' '}
+            Don&apos;t have an account?{' '}
             <Link as={RouterLink} to="/signup" color="brand.500">
               Sign up
             </Link>

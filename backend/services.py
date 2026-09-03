@@ -18,6 +18,11 @@ from search import match_name, DEFAULT_MIN_SCORE
 
 logger = Logger(child=True)
 
+# Upper bound on how many identical copies a single create request may add.
+# Guards against accidental/abusive bulk writes while comfortably covering
+# realistic pantry restocking (e.g. a case of cans).
+COPIES_MAX = 100
+
 
 def _now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
@@ -214,32 +219,12 @@ class ItemService:
 
         return [self._deserialize_item(item) for item in items]
 
-    def create_item(
-        self,
-        user_id: str,
-        name: str,
-        location_id: str,
-        dimensions: List[Dict[str, Any]] = None,
-        use_by_date: Optional[str] = None,
-        tags: List[str] = None,
-        notes: str = ""
-    ) -> Dict[str, Any]:
-        """Create a new inventory item with optional dimensions for a specific user."""
-        dimensions = dimensions or []
-        tags = [t.lower() for t in (tags or [])]
+    def _persist_new_item(self, item: "Item", tags: List[str]) -> Dict[str, Any]:
+        """Write one already-built Item (plus its tag reverse-index rows) to storage.
 
-        self._validate_dimensions(dimensions)
-
-        item = Item.create(
-            user_id=user_id,
-            name=name,
-            location_id=location_id,
-            dimensions=dimensions,
-            tags=tags,
-            use_by_date=use_by_date,
-            notes=notes
-        )
-
+        Shared by the single- and multi-copy create paths so persistence stays
+        in one place. Returns the response-shaped (deserialized) item dict.
+        """
         # Build a storage-shaped dict (Decimal dimension values) without mutating
         # the response-shaped dict we hand back to the caller.
         storage_dict = item.to_dict()
@@ -252,10 +237,49 @@ class ItemService:
         self.items_table.put_item(Item=storage_dict)
 
         if tags:
-            self.tag_service.add_tags_to_item(user_id, item.item_id, tags)
+            self.tag_service.add_tags_to_item(item.user_id, item.item_id, tags)
 
-        logger.info(f"Created item: {item.item_id} for user: {user_id}")
+        logger.info(f"Created item: {item.item_id} for user: {item.user_id}")
         return self._deserialize_item(item.to_dict())
+
+    def create_item(
+        self,
+        user_id: str,
+        name: str,
+        location_id: str,
+        dimensions: List[Dict[str, Any]] = None,
+        use_by_date: Optional[str] = None,
+        tags: List[str] = None,
+        notes: str = "",
+        copies: int = 1
+    ):
+        """Create one or more inventory items with optional dimensions.
+
+        ``copies`` creates that many distinct item entries (each its own
+        ``item_id``) sharing identical fields. Returns a single item dict when
+        ``copies == 1`` (the default, backward-compatible shape) and a list of
+        item dicts when ``copies > 1``.
+        """
+        copies = self._validate_copies(copies)
+        dimensions = dimensions or []
+        tags = [t.lower() for t in (tags or [])]
+
+        self._validate_dimensions(dimensions)
+
+        created = []
+        for _ in range(copies):
+            item = Item.create(
+                user_id=user_id,
+                name=name,
+                location_id=location_id,
+                dimensions=dimensions,
+                tags=tags,
+                use_by_date=use_by_date,
+                notes=notes
+            )
+            created.append(self._persist_new_item(item, tags))
+
+        return created[0] if copies == 1 else created
 
     def get_item(self, user_id: str, item_id: str) -> Optional[Dict[str, Any]]:
         """Get an item by ID for a specific user."""
@@ -589,6 +613,21 @@ class ItemService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_copies(copies: Any) -> int:
+        """Validate the requested copy count, raising ValueError on any problem.
+
+        Must be an integer in [1, COPIES_MAX]. ``bool`` is rejected explicitly
+        (it is an ``int`` subclass) so ``True``/``False`` cannot slip through.
+        """
+        if isinstance(copies, bool) or not isinstance(copies, int):
+            raise ValueError(f"Invalid value for 'copies': must be an integer (got {copies!r})")
+        if copies < 1:
+            raise ValueError("Invalid value for 'copies': must be at least 1")
+        if copies > COPIES_MAX:
+            raise ValueError(f"Invalid value for 'copies': must be at most {COPIES_MAX}")
+        return copies
 
     @staticmethod
     def _validate_dimensions(dimensions: List[Dict[str, Any]]) -> None:

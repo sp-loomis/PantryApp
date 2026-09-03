@@ -232,14 +232,16 @@ def item():
 @click.option('--use-by', help='Use-by date (YYYY-MM-DD)')
 @click.option('--tags', help='Comma-separated tags')
 @click.option('--notes', default='', help='Additional notes')
+@click.option('--copies', type=int, default=1, help='Number of identical copies to create (default 1)')
 def add_item(name: str, location: str, count: Optional[float],
              weight: Optional[float], weight_unit: str, volume: Optional[float], volume_unit: str,
-             use_by: Optional[str], tags: Optional[str], notes: str):
+             use_by: Optional[str], tags: Optional[str], notes: str, copies: int):
     """Add a new inventory item with optional dimensions."""
     item_data = {
         'name': name,
         'location_id': location,
-        'notes': notes
+        'notes': notes,
+        'copies': copies
     }
 
     # Build dimensions array

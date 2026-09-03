@@ -230,7 +230,10 @@ def get_expiring_items():
         user_id = _current_user_id()
 
         location_id = query_params.get('location_id')
-        days = int(query_params.get('days', 7))
+        try:
+            days = int(query_params.get('days', 7))
+        except (TypeError, ValueError):
+            return {"error": "Invalid value for 'days': must be an integer"}, 400
 
         items = item_service.get_expiring_items(user_id, location_id, days)
         return {"items": items}
@@ -435,6 +438,10 @@ def get_aggregate_stats():
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
+    except ValueError as e:
+        # e.g. an unrecognized weight_unit/volume_unit requested for conversion.
+        logger.warning(f"Validation error getting aggregate stats: {str(e)}")
+        return {"error": f"Invalid unit: {str(e)}"}, 400
     except Exception as e:
         logger.exception("Error getting aggregate stats")
         return {"error": str(e)}, 500

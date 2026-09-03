@@ -25,12 +25,29 @@ const ERROR_MESSAGES = {
 /**
  * Get user-friendly error message
  */
+/**
+ * Fallback messages for backend API errors (ApiError) by HTTP status, used only
+ * when the backend didn't supply a specific message.
+ */
+const API_STATUS_MESSAGES = {
+  401: 'Your session has expired. Please sign in again.',
+  403: 'You do not have permission to do that.',
+  404: 'Not found.',
+  500: 'Something went wrong. Please try again.'
+};
+
 function getUserFriendlyMessage(error) {
   if (!error) return null;
 
   // If error is a string, return it directly
   if (typeof error === 'string') {
     return error;
+  }
+
+  // Backend API errors: the backend's own message is user-facing (e.g.
+  // "Location not found"); fall back to a status-based message if absent.
+  if (error.name === 'ApiError') {
+    return error.message || API_STATUS_MESSAGES[error.status] || 'Request failed. Please try again';
   }
 
   // Check for Cognito error code
@@ -55,7 +72,7 @@ function getUserFriendlyMessage(error) {
 /**
  * ErrorMessage Component
  */
-export default function ErrorMessage({ error, onClose }) {
+export default function ErrorMessage({ error }) {
   if (!error) return null;
 
   const message = getUserFriendlyMessage(error);

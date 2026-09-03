@@ -28,6 +28,7 @@ export function AuthProvider({ children }) {
  * Hook to access authentication context
  * @returns {Object} Authentication state and methods
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuthContext() {
   const context = useContext(AuthContext);
 

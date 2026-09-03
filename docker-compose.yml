@@ -1,0 +1,16 @@
+# Tier-1 local dev dependencies.
+# Currently just DynamoDB Local, which backs the local backend server
+# (backend/local_server.py) and seed script (backend/seed_local.py).
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: pantry-dynamodb-local
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "./data"]
+    ports:
+      - "8001:8000"
+    working_dir: /home/dynamodblocal
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+
+volumes:
+  dynamodb-data:

@@ -9,8 +9,10 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { configureAmplify } from './config/amplify';
 
-// Configure AWS Amplify
-configureAmplify();
+// Configure AWS Amplify — skipped in local dev-bypass auth mode (no Cognito).
+if (import.meta.env.VITE_AUTH_MODE !== 'local') {
+  configureAmplify();
+}
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

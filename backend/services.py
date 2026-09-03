@@ -95,7 +95,14 @@ class LocationService:
         return response.get("Attributes")
 
     def delete_location(self, user_id: str, location_id: str) -> bool:
-        """Delete a storage location for a specific user."""
+        """Delete a storage location for a specific user.
+
+        Returns False when the location does not exist so callers can surface a
+        404 (DynamoDB's delete_item succeeds unconditionally, so we must check
+        existence first).
+        """
+        if not self.get_location(user_id, location_id):
+            return False
         try:
             self.table.delete_item(Key={"user_id": user_id, "location_id": location_id})
             logger.info(f"Deleted location: {location_id} for user: {user_id}")

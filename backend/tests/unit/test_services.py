@@ -1,112 +1,19 @@
 """
-Service-layer and routing tests for the Pantry App backend.
+Service-layer tests for the Pantry App backend.
 
-Uses moto to mock DynamoDB. Covers the behavior changed in the backend
+Uses moto to mock DynamoDB (shared table schema and the ``services`` fixture
+live in ``tests/conftest.py``). Covers the behavior changed in the backend
 cleanup: the expiring-items bug fixes, Decimal/float response consistency,
 tag denormalization, aggregate stats without legacy fields, and the new
 tag endpoints.
+
+Route-level (HTTP) behavior is covered separately by the E2E suite in
+``tests/e2e/``.
 """
 
-import json
-import os
-import importlib
-from decimal import Decimal
-
-import boto3
 import pytest
-from moto import mock_aws
-
-ITEMS_TABLE = "test-items"
-LOCATIONS_TABLE = "test-locations"
-ITEM_TAGS_TABLE = "test-item-tags"
 
 USER = "user-1"
-
-
-class _FakeLambdaContext:
-    """Minimal stand-in for the Lambda context object (used by Powertools logging)."""
-    function_name = "test-fn"
-    memory_limit_in_mb = 128
-    invoked_function_arn = "arn:aws:lambda:us-east-1:123456789012:function:test-fn"
-    aws_request_id = "test-request-id"
-
-
-def _create_tables(dynamodb):
-    """Create the three tables with the same key schema/GSIs as production."""
-    dynamodb.create_table(
-        TableName=ITEMS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "item_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "item_id", "AttributeType": "S"},
-            {"AttributeName": "location_id", "AttributeType": "S"},
-            {"AttributeName": "use_by_date", "AttributeType": "S"},
-            {"AttributeName": "item_name", "AttributeType": "S"},
-        ],
-        GlobalSecondaryIndexes=[
-            _gsi("LocationIndex", "user_id", "location_id"),
-            _gsi("UseByDateIndex", "user_id", "use_by_date"),
-            _gsi("ItemNameIndex", "user_id", "item_name"),
-        ],
-    )
-    dynamodb.create_table(
-        TableName=LOCATIONS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "location_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "location_id", "AttributeType": "S"},
-        ],
-    )
-    dynamodb.create_table(
-        TableName=ITEM_TAGS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "tag_item_composite", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "tag_item_composite", "AttributeType": "S"},
-            {"AttributeName": "tag_name", "AttributeType": "S"},
-        ],
-        GlobalSecondaryIndexes=[_gsi("TagIndex", "user_id", "tag_name")],
-    )
-
-
-def _gsi(name, hash_key, range_key):
-    return {
-        "IndexName": name,
-        "KeySchema": [
-            {"AttributeName": hash_key, "KeyType": "HASH"},
-            {"AttributeName": range_key, "KeyType": "RANGE"},
-        ],
-        "Projection": {"ProjectionType": "ALL"},
-    }
-
-
-@pytest.fixture
-def services():
-    """Provide ItemService + LocationService backed by mocked DynamoDB."""
-    with mock_aws():
-        dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-        _create_tables(dynamodb)
-
-        # Import here so `dimensions`/`models`/`services` resolve normally.
-        from services import ItemService, LocationService
-
-        item_service = ItemService(
-            dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE)
-        )
-        location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
-        yield item_service, location_service, dynamodb
 
 
 # ---------------------------------------------------------------------------
@@ -243,40 +150,6 @@ def test_aggregate_stats_shape(services):
     assert "quantities_by_unit" not in stats
     assert "weight" in stats["aggregated_dimensions"]
     assert "volume" in stats["aggregated_dimensions"]
-
-
-# ---------------------------------------------------------------------------
-# Bug #1: /items/expiring route is reachable (not shadowed by /items/<id>)
-# ---------------------------------------------------------------------------
-
-def test_expiring_route_not_shadowed():
-    with mock_aws():
-        dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-        _create_tables(dynamodb)
-
-        os.environ["ITEMS_TABLE_NAME"] = ITEMS_TABLE
-        os.environ["LOCATIONS_TABLE_NAME"] = LOCATIONS_TABLE
-        os.environ["ITEM_TAGS_TABLE_NAME"] = ITEM_TAGS_TABLE
-
-        import app
-        importlib.reload(app)
-
-        event = {
-            "httpMethod": "GET",
-            "path": "/items/expiring",
-            "queryStringParameters": {"days": "7"},
-            "headers": {},
-            "requestContext": {"authorizer": {"claims": {"sub": USER}}},
-            "body": None,
-            "isBase64Encoded": False,
-        }
-        result = app.lambda_handler(event, _FakeLambdaContext())
-
-        assert result["statusCode"] == 200
-        body = json.loads(result["body"])
-        # If the route were shadowed by /items/<item_id>, we'd get a 404
-        # "Item not found" instead of an items list.
-        assert "items" in body
 
 
 if __name__ == "__main__":

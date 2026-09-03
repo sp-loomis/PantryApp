@@ -12,10 +12,14 @@ import {
   Button,
   Center,
   FormControl,
+  FormHelperText,
   FormLabel,
   Input,
+  NumberInput,
+  NumberInputField,
   Spinner,
   Textarea,
+  useToast,
   VStack,
   Text,
 } from '@chakra-ui/react';
@@ -42,6 +46,7 @@ export default function ItemFormPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { reloadLocations } = useInventoryContext();
+  const toast = useToast();
 
   const [name, setName] = useState('');
   const [locationId, setLocationId] = useState(searchParams.get('location') || '');
@@ -49,6 +54,8 @@ export default function ItemFormPage() {
   const [useByDate, setUseByDate] = useState('');
   const [tags, setTags] = useState([]);
   const [notes, setNotes] = useState('');
+  // Number of identical copies to create (create mode only).
+  const [copies, setCopies] = useState('1');
 
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(isEdit);
@@ -101,13 +108,39 @@ export default function ItemFormPage() {
       notes,
     };
 
+    // How many copies to create (create mode only). Clamp defensively; the
+    // backend enforces the same [1, 100] bound.
+    const numCopies = isEdit
+      ? 1
+      : Math.max(1, Math.min(100, parseInt(copies, 10) || 1));
+    if (!isEdit) payload.copies = numCopies;
+
     try {
       setSubmitting(true);
       setError(null);
       const saved = isEdit ? await updateItem(itemId, payload) : await createItem(payload);
+
+      if (isEdit) {
+        navigate(`/items/${itemId}`);
+        return;
+      }
+
       // A new item may introduce a first-use of a location; keep context fresh.
-      if (!isEdit) await reloadLocations();
-      navigate(`/items/${saved.item_id}`);
+      await reloadLocations();
+
+      // createItem returns a single object for one copy, an array for several.
+      const created = Array.isArray(saved) ? saved : [saved];
+      if (created.length === 1) {
+        navigate(`/items/${created[0].item_id}`);
+      } else {
+        toast({
+          title: `Added ${created.length} copies of ${payload.name}`,
+          status: 'success',
+          duration: 3000,
+          isClosable: true,
+        });
+        navigate(-1);
+      }
     } catch (err) {
       setError(err);
     } finally {
@@ -184,6 +217,21 @@ export default function ItemFormPage() {
               rows={3}
             />
           </FormControl>
+
+          {!isEdit && (
+            <FormControl>
+              <FormLabel>Copies</FormLabel>
+              <NumberInput
+                min={1}
+                max={100}
+                value={copies}
+                onChange={(str) => setCopies(str)}
+              >
+                <NumberInputField inputMode="numeric" />
+              </NumberInput>
+              <FormHelperText>Add several identical entries at once (up to 100).</FormHelperText>
+            </FormControl>
+          )}
 
           <Button type="submit" isLoading={submitting} loadingText="Saving..." width="full">
             {isEdit ? 'Save changes' : 'Add item'}

@@ -51,12 +51,18 @@ export async function getItem(itemId) {
 }
 
 /**
- * Create an item.
- * @param {{name, location_id, dimensions?, use_by_date?, tags?, notes?}} payload
+ * Create an item, or several identical copies at once.
+ *
+ * The response envelope is polymorphic: a single `copies` (or omitted) returns
+ * `{ item }` and yields one item object; `copies > 1` returns `{ items }` and
+ * yields an array. Callers can normalize with `Array.isArray(result)`.
+ *
+ * @param {{name, location_id, dimensions?, use_by_date?, tags?, notes?, copies?}} payload
+ * @returns {Promise<object|object[]>} the created item, or an array of copies
  */
 export async function createItem(payload) {
   const data = await api.post('/items', payload);
-  return data.item;
+  return data.items ?? data.item;
 }
 
 export async function updateItem(itemId, updates) {

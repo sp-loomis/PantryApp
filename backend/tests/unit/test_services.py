@@ -49,6 +49,87 @@ def test_create_item_returns_floats_and_no_legacy_fields(services):
 
 
 # ---------------------------------------------------------------------------
+# Adding many copies at once (copies parameter)
+# ---------------------------------------------------------------------------
+
+def test_create_item_copies_creates_distinct_entries(services):
+    item_service, _, _ = services
+    created = item_service.create_item(
+        user_id=USER,
+        name="Canned Beans",
+        location_id="pantry",
+        tags=["Staple"],
+        copies=3,
+    )
+
+    # copies>1 returns a list of that many items.
+    assert isinstance(created, list)
+    assert len(created) == 3
+
+    # Each copy is a distinct entry with identical shared fields.
+    ids = {item["item_id"] for item in created}
+    assert len(ids) == 3
+    for item in created:
+        assert item["name"] == "Canned Beans"
+        assert item["location_id"] == "pantry"
+        assert item["tags"] == ["staple"]
+
+    # Every copy is independently retrievable from storage.
+    for item in created:
+        assert item_service.get_item(USER, item["item_id"]) is not None
+
+
+def test_create_item_copies_denormalizes_tags_for_each_copy(services):
+    item_service, _, _ = services
+    created = item_service.create_item(
+        user_id=USER,
+        name="Yogurt",
+        location_id="fridge",
+        tags=["Dairy"],
+        copies=2,
+    )
+
+    # A reverse-index tag row exists for each new item id.
+    tagged_ids = set(item_service.tag_service.get_items_by_tag(USER, "dairy"))
+    for item in created:
+        assert item["item_id"] in tagged_ids
+
+
+def test_create_item_copies_default_returns_single_dict(services):
+    item_service, _, _ = services
+    created = item_service.create_item(
+        user_id=USER, name="Milk", location_id="fridge"
+    )
+    # Default (copies omitted) preserves the single-dict contract.
+    assert isinstance(created, dict)
+    assert created["name"] == "Milk"
+
+    created_one = item_service.create_item(
+        user_id=USER, name="Milk", location_id="fridge", copies=1
+    )
+    assert isinstance(created_one, dict)
+
+
+@pytest.mark.parametrize("bad_copies", [0, -1, 1.5, "3", True, None])
+def test_create_item_invalid_copies_raises(services, bad_copies):
+    item_service, _, _ = services
+    with pytest.raises(ValueError):
+        item_service.create_item(
+            user_id=USER, name="Milk", location_id="fridge", copies=bad_copies
+        )
+
+
+def test_create_item_copies_over_cap_raises(services):
+    from services import COPIES_MAX
+
+    item_service, _, _ = services
+    with pytest.raises(ValueError):
+        item_service.create_item(
+            user_id=USER, name="Milk", location_id="fridge", copies=COPIES_MAX + 1
+        )
+
+
+# ---------------------------------------------------------------------------
 # Bug #2: expiring honors the location filter
 # ---------------------------------------------------------------------------
 

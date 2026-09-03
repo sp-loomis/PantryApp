@@ -188,17 +188,24 @@ def create_item():
         if not isinstance(tags, list):
             return {"error": "Invalid value for 'tags': must be a list"}, 400
 
-        item = item_service.create_item(
+        # copies>1 creates that many distinct entries; the service validates the
+        # range and returns a single dict (copies==1) or a list (copies>1).
+        copies = data.get('copies', 1)
+
+        result = item_service.create_item(
             user_id=user_id,
             name=data['name'],
             location_id=data['location_id'],
             dimensions=data.get('dimensions', []),
             use_by_date=data.get('use_by_date'),
             tags=tags,
-            notes=data.get('notes', '')
+            notes=data.get('notes', ''),
+            copies=copies
         )
-        metrics.add_metric(name="ItemCreated", unit="Count", value=1)
-        return {"item": item}, 201
+        metrics.add_metric(name="ItemCreated", unit="Count", value=len(result) if isinstance(result, list) else 1)
+        if isinstance(result, list):
+            return {"items": result}, 201
+        return {"item": result}, 201
     except AuthenticationError as e:
         logger.warning(f"Unauthenticated request: {str(e)}")
         return {"error": str(e)}, 401

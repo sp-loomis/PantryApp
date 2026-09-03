@@ -17,6 +17,9 @@ import {
   Input,
   NumberInput,
   NumberInputField,
+  NumberInputStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
   Spinner,
   Textarea,
   useToast,
@@ -228,6 +231,10 @@ export default function ItemFormPage() {
                 onChange={(str) => setCopies(str)}
               >
                 <NumberInputField inputMode="numeric" />
+                <NumberInputStepper>
+                  <NumberIncrementStepper />
+                  <NumberDecrementStepper />
+                </NumberInputStepper>
               </NumberInput>
               <FormHelperText>Add several identical entries at once (up to 100).</FormHelperText>
             </FormControl>

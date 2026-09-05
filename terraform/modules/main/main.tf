@@ -199,7 +199,36 @@ module "api_lambda" {
     COGNITO_USER_POOL_ID = module.cognito_pool.user_pool_id
     COGNITO_CLIENT_ID    = module.cognito_pool.user_pool_client_id
     ENVIRONMENT          = var.environment
+    # Origin echoed back in CORS headers on real (Lambda-generated) responses.
+    # Kept in sync with the API Gateway CORS config below.
+    ALLOWED_ORIGIN = var.web_allowed_origin
   }
 
   tags = var.env_tags
+}
+
+# ============================================================================
+# API Gateway — public HTTPS endpoint for the Lambda
+# ============================================================================
+module "api_gateway" {
+  source = "../api_gateway"
+
+  api_name              = "${var.name_prefix}-api"
+  environment           = var.environment
+  lambda_function_name  = module.api_lambda.function_name
+  lambda_invoke_arn     = module.api_lambda.invoke_arn
+  cognito_user_pool_arn = module.cognito_pool.user_pool_arn
+  allowed_origin        = var.web_allowed_origin
+  tags                  = var.env_tags
+}
+
+# ============================================================================
+# Static site — S3 + CloudFront hosting for the React SPA
+# ============================================================================
+module "static_site" {
+  source = "../static_site"
+
+  bucket_name = "${var.name_prefix}-web"
+  environment = var.environment
+  tags        = var.env_tags
 }

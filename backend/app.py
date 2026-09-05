@@ -13,7 +13,7 @@ import boto3
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
 
 from services import ItemService, LocationService, TagService
 from auth import get_effective_user_id, AuthenticationError
@@ -22,7 +22,16 @@ from auth import get_effective_user_id, AuthenticationError
 logger = Logger()
 tracer = Tracer()
 metrics = Metrics(namespace="PantryApp")
-app = APIGatewayRestResolver()
+# CORS lets the CloudFront-hosted SPA call this API cross-origin. The allowed
+# origin is injected by Terraform (ALLOWED_ORIGIN); "*" is safe here because the
+# API authenticates with a Bearer token, not cookies. API Gateway answers the
+# OPTIONS preflight via a MOCK integration (see terraform/modules/api_gateway),
+# so this config just adds the CORS headers to real responses.
+cors_config = CORSConfig(
+    allow_origin=os.environ.get("ALLOWED_ORIGIN", "*"),
+    allow_headers=["Authorization", "Content-Type"],
+)
+app = APIGatewayRestResolver(cors=cors_config)
 
 # Initialize DynamoDB resource
 dynamodb = boto3.resource('dynamodb')

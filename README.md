@@ -5,6 +5,7 @@ A serverless inventory management system for tracking items across multiple stor
 ## Quick Start
 
 ### Prerequisites
+
 - AWS Account with appropriate permissions
 - Python 3.11+
 - Node.js 18+ (for React frontend)
@@ -15,6 +16,7 @@ A serverless inventory management system for tracking items across multiple stor
 #### Python CLI
 
 1. **Install CLI dependencies:**
+
    ```bash
    cd frontend/cli
    pip install -r requirements.txt
@@ -23,18 +25,20 @@ A serverless inventory management system for tracking items across multiple stor
 
 2. **Configure Lambda function name:**
    ```bash
-   export PANTRY_LAMBDA_FUNCTION=dev-use2-pantry-lambda-core-api
+   export PANTRY_LAMBDA_FUNCTION=dev-use1-pantry-lambda-core-api
    ```
 
 #### React Web Frontend
 
 1. **Install dependencies:**
+
    ```bash
    cd frontend/react
    npm install
    ```
 
 2. **Configure environment:**
+
    ```bash
    cd web
    cp .env.example .env
@@ -61,11 +65,13 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 **API Endpoint:** `POST /locations`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py location create --name <name> [--description <description>]
 ```
 
 **Input:**
+
 ```json
 {
   "name": "Main Freezer",
@@ -74,6 +80,7 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 ```
 
 **Output:**
+
 ```json
 {
   "location": {
@@ -90,11 +97,13 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 **API Endpoint:** `GET /locations`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py location list
 ```
 
 **Output:**
+
 ```json
 {
   "locations": [
@@ -113,11 +122,13 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 **API Endpoint:** `GET /locations/<location_id>`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py location get <location_id>
 ```
 
 **Output:**
+
 ```json
 {
   "location": {
@@ -134,11 +145,13 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 **API Endpoint:** `PUT /locations/<location_id>`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py location update <location_id> [--name <name>] [--description <description>]
 ```
 
 **Input:**
+
 ```json
 {
   "name": "Large Freezer",
@@ -147,6 +160,7 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 ```
 
 **Output:**
+
 ```json
 {
   "location": {
@@ -164,11 +178,13 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 **API Endpoint:** `DELETE /locations/<location_id>`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py location delete <location_id>
 ```
 
 **Output:**
+
 ```json
 {
   "message": "Location deleted successfully"
@@ -184,6 +200,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `POST /items`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py item add --name <name> --location <location_id> \
   [--quantity <qty>] [--unit <unit>] \
@@ -194,6 +211,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ```
 
 **Input:**
+
 ```json
 {
   "name": "Ground Beef",
@@ -219,6 +237,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ```
 
 **Output:**
+
 ```json
 {
   "item": {
@@ -248,6 +267,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ```
 
 **Dimension Types:**
+
 - **count**: Number of items (units)
 - **weight**: Weight (g, kg, oz, lb)
 - **volume**: Volume (ml, l, tsp, tbsp, fl oz, cup, pint, quart, gallon)
@@ -257,6 +277,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `GET /items[?location_id=<id>&tag=<tag>]`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py item list [--location <location_id>] [--tag <tag>]
 ```
@@ -265,6 +286,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 > the structural `location`/`tag` filters.
 
 **Output:**
+
 ```json
 {
   "items": [
@@ -289,11 +311,13 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `GET /items/<item_id>`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py item get <item_id>
 ```
 
 **Output:**
+
 ```json
 {
   "item": {
@@ -316,6 +340,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `PUT /items/<item_id>`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py item update <item_id> \
   [--name <name>] [--location <location_id>] \
@@ -335,11 +360,13 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `DELETE /items/<item_id>`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py item remove <item_id>
 ```
 
 **Output:**
+
 ```json
 {
   "message": "Item deleted successfully"
@@ -351,15 +378,18 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `GET /items/expiring[?location_id=<id>&days=<days>]`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py item expiring [--location <location_id>] [--days <days>]
 ```
 
 **Query Parameters:**
+
 - `location_id` (optional): Filter by location
 - `days` (optional): Number of days to look ahead (default: 7)
 
 **Output:**
+
 ```json
 {
   "items": [
@@ -382,6 +412,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 **API Endpoint:** `POST /search`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py search \
   [--name <name>] [--location <location_id>] \
@@ -391,7 +422,7 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 ```
 
 Name matching is **fuzzy, multi-word, and order-independent**: the query is split
-into terms and *every* term must match some word of the item name (by substring or
+into terms and _every_ term must match some word of the item name (by substring or
 typo-tolerant similarity), so `--name "milk whole"` matches "Whole Milk". Results are
 **ranked by relevance**, and each matched item carries a `match` object with the score
 and whole-word highlight spans (character offsets into `name`) for the UI. `--min-score`
@@ -399,6 +430,7 @@ tunes the fuzzy threshold (default `0.7`); the other criteria are applied as fil
 top of the name match.
 
 **Input:**
+
 ```json
 {
   "name": "beef",
@@ -411,6 +443,7 @@ top of the name match.
 ```
 
 **Output:** (`match` present only when `name` was supplied)
+
 ```json
 {
   "items": [
@@ -429,6 +462,7 @@ top of the name match.
 **API Endpoint:** `GET /aggregate[?location_id=<id>&tag=<tag>&weight_unit=<unit>&volume_unit=<unit>]`
 
 **CLI Command:**
+
 ```bash
 ./pantry_cli.py stats \
   [--location <location_id>] [--tag <tag>] \
@@ -436,12 +470,14 @@ top of the name match.
 ```
 
 **Query Parameters:**
+
 - `location_id` (optional): Filter by location
 - `tag` (optional): Filter by tag
 - `weight_unit` (optional): Preferred weight unit for aggregation (g, kg, oz, lb)
 - `volume_unit` (optional): Preferred volume unit for aggregation (ml, l, cup, gallon, etc.)
 
 **Output:**
+
 ```json
 {
   "stats": {
@@ -473,6 +509,7 @@ top of the name match.
 ## Architecture
 
 ### Tech Stack
+
 - **Backend**: AWS Lambda with Lambda Powertools (Python 3.11)
 - **Database**: DynamoDB with GSIs for optimized access patterns
 - **Frontend**:
@@ -480,27 +517,31 @@ top of the name match.
   - React Web App with AWS Cognito authentication
 - **Infrastructure**: Terraform/Terragrunt
 - **Deployment**: GitHub Actions with OIDC authentication
-- **Region**: US-East-2 (Ohio)
+- **Region**: US-East-1 (Ohio)
 
 ### Database Tables
 
 #### Items Table
+
 - **Primary Key**: `item_id` (hash), `created_at` (range)
 - **GSIs**:
   - `LocationIndex`: Query items by location
   - `UseByDateIndex`: Query items by expiration date
 
 #### Locations Table
+
 - **Primary Key**: `location_id` (hash)
 
 #### Item-Tags Table
+
 - **Primary Key**: `tag_name` (hash), `item_id` (range)
 - **GSI**: `ItemTagsIndex` for reverse lookup
 
 ### Resource Naming Convention
+
 All AWS resources follow: `{environment}-{region}-{project}-{resource_type}-{resource_name}`
 
-Example: `dev-use2-pantry-lambda-core-api`
+Example: `dev-use1-pantry-lambda-core-api`
 
 ## Development
 
@@ -528,11 +569,13 @@ PantryApp/
 This project uses Claude as Lead Developer and Gemini CLI as Subject Matter Expert.
 
 **To request changes:**
+
 1. Create a GitHub Issue describing the feature or bug
 2. Claude analyzes the codebase and implements changes
 3. Review the PR and provide feedback
 
 **Configuration:**
+
 - `.claude/CLAUDE.md` - Instructions for Claude
 - `GEMINI.md` - Instructions for Gemini CLI
 - `CODEOWNERS` - Code ownership definitions
@@ -551,6 +594,7 @@ See `.claude/CLAUDE.md` for detailed alignment requirements.
 ### Local Testing
 
 **Test Lambda locally:**
+
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -558,6 +602,7 @@ python -c "from app import lambda_handler; print(lambda_handler({'httpMethod': '
 ```
 
 **Terraform operations:**
+
 ```bash
 cd terraform/environments/dev
 terragrunt plan
@@ -575,22 +620,23 @@ terragrunt apply
 2. **Create IAM Role** with trust policy for GitHub Actions
 
 3. **Create Remote State Resources:**
+
    ```bash
    # Create S3 bucket for Terraform state
-   aws s3 mb s3://dev-use2-pantry-terraform-state --region us-east-2
+   aws s3 mb s3://dev-use1-pantry-terraform-state --regionus-east-1
 
    # Enable versioning
    aws s3api put-bucket-versioning \
-     --bucket dev-use2-pantry-terraform-state \
+     --bucket dev-use1-pantry-terraform-state \
      --versioning-configuration Status=Enabled
 
    # Create DynamoDB table for state locking
    aws dynamodb create-table \
-     --table-name dev-use2-pantry-terraform-locks \
+     --table-name dev-use1-pantry-terraform-locks \
      --attribute-definitions AttributeName=LockID,AttributeType=S \
      --key-schema AttributeName=LockID,KeyType=HASH \
      --billing-mode PAY_PER_REQUEST \
-     --region us-east-2
+     --regionus-east-1
    ```
 
 4. **Deploy via GitHub Actions:**
@@ -601,12 +647,14 @@ terragrunt apply
 ## Monitoring
 
 The Lambda function uses AWS Lambda Powertools (via AWS-managed Layer) for:
+
 - **Structured Logging**: JSON logs with correlation IDs
 - **X-Ray Tracing**: Distributed tracing
 - **CloudWatch Metrics**: Custom metrics for operations
 
 **View logs and metrics:**
-- Log group: `/aws/lambda/dev-use2-pantry-lambda-core-api`
+
+- Log group: `/aws/lambda/dev-use1-pantry-lambda-core-api`
 - Metrics namespace: `PantryApp`
 - X-Ray traces: AWS X-Ray console
 

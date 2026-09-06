@@ -29,7 +29,7 @@ from auth import (
 lambda_client = boto3.client('lambda')
 
 # Get configuration from environment
-LAMBDA_FUNCTION_NAME = os.environ.get('PANTRY_LAMBDA_FUNCTION', 'dev-use2-pantry-lambda-core-api')
+LAMBDA_FUNCTION_NAME = os.environ.get('PANTRY_LAMBDA_FUNCTION', 'dev-use1-pantry-lambda-core-api')
 COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID')
 

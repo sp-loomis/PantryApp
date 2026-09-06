@@ -8,6 +8,8 @@ on:
     paths:
       - "terraform/**"
       - "backend/**"
+      - "frontend/**"
+      - "scripts/**"
       - ".github/workflows/deploy.yml"
 
 permissions:
@@ -28,7 +30,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: GitHubActions-PantryApp
-          aws-region: us-east-2
+          aws-region: us-east-1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -66,3 +68,14 @@ jobs:
           echo "Lambda Function: $(terragrunt output --terragrunt-non-interactive -raw lambda_function_name)"
           echo "Items Table: $(terragrunt output --terragrunt-non-interactive -raw items_table_name)"
           echo "Locations Table: $(terragrunt output --terragrunt-non-interactive -raw locations_table_name)"
+          echo "API URL: $(terragrunt output --terragrunt-non-interactive -raw api_gateway_invoke_url)"
+          echo "Web URL: $(terragrunt output --terragrunt-non-interactive -raw web_url)"
+
+      # --- Frontend: build the SPA and publish it to S3 + CloudFront ---------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Build and deploy web frontend
+        run: scripts/deploy-web.sh ${{ github.ref_name }}

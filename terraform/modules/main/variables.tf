@@ -43,3 +43,13 @@ variable "env_tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "web_allowed_origin" {
+  description = <<-EOT
+    Origin allowed by CORS for the API (Access-Control-Allow-Origin). Defaults
+    to "*", which is safe because the API authenticates via Bearer token, not
+    cookies. Tighten to the CloudFront/custom-domain origin once stable.
+  EOT
+  type        = string
+  default     = "*"
+}

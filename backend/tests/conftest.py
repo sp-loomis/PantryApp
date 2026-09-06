@@ -25,6 +25,7 @@ from moto import mock_aws
 ITEMS_TABLE = "test-items"
 LOCATIONS_TABLE = "test-locations"
 ITEM_TAGS_TABLE = "test-item-tags"
+TASKS_TABLE = "test-tasks"
 
 # Default authenticated user for requests that don't specify one.
 USER = "user-1"
@@ -90,6 +91,20 @@ def create_tables(dynamodb) -> None:
             {"AttributeName": "tag_name", "AttributeType": "S"},
         ],
         GlobalSecondaryIndexes=[_gsi("TagIndex", "user_id", "tag_name")],
+    )
+    dynamodb.create_table(
+        TableName=TASKS_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "task_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "task_id", "AttributeType": "S"},
+            {"AttributeName": "due_date", "AttributeType": "S"},
+        ],
+        GlobalSecondaryIndexes=[_gsi("DueDateIndex", "user_id", "due_date")],
     )
 
 
@@ -195,6 +210,14 @@ def services(dynamodb_tables):
 
 
 @pytest.fixture
+def task_service(dynamodb_tables):
+    """TaskService backed by mocked DynamoDB (service-layer tests)."""
+    from services import TaskService
+
+    yield TaskService(dynamodb_tables.Table(TASKS_TABLE))
+
+
+@pytest.fixture
 def api(dynamodb_tables):
     """An ApiClient wrapping a freshly-reloaded ``app`` bound to the mocked tables.
 
@@ -204,6 +227,7 @@ def api(dynamodb_tables):
     os.environ["ITEMS_TABLE_NAME"] = ITEMS_TABLE
     os.environ["LOCATIONS_TABLE_NAME"] = LOCATIONS_TABLE
     os.environ["ITEM_TAGS_TABLE_NAME"] = ITEM_TAGS_TABLE
+    os.environ["TASKS_TABLE_NAME"] = TASKS_TABLE
 
     import app
     importlib.reload(app)

@@ -119,6 +119,46 @@ module "item_tags_table" {
   tags         = var.env_tags
 }
 
+# DynamoDB table for tasks/chores (user-scoped)
+module "tasks_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-tasks"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "task_id"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "task_id"
+      type = "S"
+    },
+    {
+      name = "due_date"
+      type = "S"
+    }
+  ]
+
+  # DueDateIndex is sparse: only one-shot tasks with a due_date appear, mirroring
+  # the items' UseByDateIndex. Recurring tasks carry no due_date and are read via
+  # the full user-partition query, then have their status computed on the fly.
+  global_secondary_indexes = [
+    {
+      name            = "DueDateIndex"
+      hash_key        = "user_id"
+      range_key       = "due_date"
+      projection_type = "ALL"
+    }
+  ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
 # IAM role for Lambda function
 data "aws_iam_policy_document" "lambda_dynamodb_policy" {
   statement {
@@ -138,7 +178,9 @@ data "aws_iam_policy_document" "lambda_dynamodb_policy" {
       "${module.items_table.table_arn}/index/*",
       module.locations_table.table_arn,
       module.item_tags_table.table_arn,
-      "${module.item_tags_table.table_arn}/index/*"
+      "${module.item_tags_table.table_arn}/index/*",
+      module.tasks_table.table_arn,
+      "${module.tasks_table.table_arn}/index/*"
     ]
   }
 
@@ -196,6 +238,7 @@ module "api_lambda" {
     ITEMS_TABLE_NAME     = module.items_table.table_name
     LOCATIONS_TABLE_NAME = module.locations_table.table_name
     ITEM_TAGS_TABLE_NAME = module.item_tags_table.table_name
+    TASKS_TABLE_NAME     = module.tasks_table.table_name
     COGNITO_USER_POOL_ID = module.cognito_pool.user_pool_id
     COGNITO_CLIENT_ID    = module.cognito_pool.user_pool_client_id
     ENVIRONMENT          = var.environment

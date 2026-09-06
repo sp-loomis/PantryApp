@@ -15,7 +15,7 @@ from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
 
-from services import ItemService, LocationService, TagService
+from services import ItemService, LocationService, TagService, TaskService
 from auth import get_effective_user_id, AuthenticationError
 
 # Initialize Powertools utilities
@@ -40,11 +40,13 @@ dynamodb = boto3.resource('dynamodb')
 ITEMS_TABLE = os.environ.get('ITEMS_TABLE_NAME')
 LOCATIONS_TABLE = os.environ.get('LOCATIONS_TABLE_NAME')
 ITEM_TAGS_TABLE = os.environ.get('ITEM_TAGS_TABLE_NAME')
+TASKS_TABLE = os.environ.get('TASKS_TABLE_NAME')
 
 # Initialize services
 item_service = ItemService(dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE))
 location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
 tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
+task_service = TaskService(dynamodb.Table(TASKS_TABLE))
 
 
 def _current_user_id() -> str:
@@ -52,6 +54,16 @@ def _current_user_id() -> str:
     query_params = app.current_event.query_string_parameters or {}
     requested_user_id = query_params.get('user_id')
     return get_effective_user_id(app.current_event.raw_event, requested_user_id)
+
+
+def _current_tz() -> str:
+    """Return the client's IANA timezone from the query string, or None.
+
+    Task windows (today / this week / interval slots) are computed in the
+    caller's local time so daily/weekly chores roll over at local midnight.
+    """
+    query_params = app.current_event.query_string_parameters or {}
+    return query_params.get('tz')
 
 
 # ============================================================================
@@ -545,6 +557,198 @@ def get_aggregate_stats():
         return {"error": f"Invalid unit: {str(e)}"}, 400
     except Exception as e:
         logger.exception("Error getting aggregate stats")
+        return {"error": str(e)}, 500
+
+
+# ============================================================================
+# Task Endpoints
+#
+# NOTE: Route registration order matters (see the Item section). The specific
+# /tasks/<task_id>/complete and /uncomplete paths MUST be registered before the
+# bare /tasks/<task_id> routes.
+# ============================================================================
+
+@app.post("/tasks")
+@tracer.capture_method
+def create_task():
+    """Create a new task (one-shot or recurring)."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        if not data.get('name'):
+            return {"error": "Missing required field: name"}, 400
+
+        tags = data.get('tags', [])
+        if not isinstance(tags, list):
+            return {"error": "Invalid value for 'tags': must be a list"}, 400
+
+        task = task_service.create_task(
+            user_id=user_id,
+            name=data['name'],
+            notes=data.get('notes', ''),
+            tags=tags,
+            recurrence_type=data.get('recurrence_type', 'none'),
+            recurrence_interval=data.get('recurrence_interval'),
+            anchor_date=data.get('anchor_date'),
+            due_date=data.get('due_date'),
+            graceful=data.get('graceful', True),
+            tz=_current_tz(),
+        )
+        metrics.add_metric(name="TaskCreated", unit="Count", value=1)
+        return {"task": task}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error creating task: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error creating task")
+        metrics.add_metric(name="TaskCreationError", unit="Count", value=1)
+        return {"error": str(e)}, 500
+
+
+@app.get("/tasks")
+@tracer.capture_method
+def list_tasks():
+    """List tasks with computed status, optionally filtered by status/tag."""
+    try:
+        query_params = app.current_event.query_string_parameters or {}
+        user_id = _current_user_id()
+
+        tasks = task_service.list_tasks(
+            user_id,
+            tz=_current_tz(),
+            status=query_params.get('status'),
+            tag=query_params.get('tag'),
+        )
+        return {"tasks": tasks}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing tasks")
+        return {"error": str(e)}, 500
+
+
+@app.post("/tasks/<task_id>/complete")
+@tracer.capture_method
+def complete_task(task_id: str):
+    """Mark a task complete for its current window."""
+    try:
+        user_id = _current_user_id()
+        task = task_service.complete_task(user_id, task_id, tz=_current_tz())
+        if task is None:
+            return {"error": "Task not found"}, 404
+        metrics.add_metric(name="TaskCompleted", unit="Count", value=1)
+        return {"task": task}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error completing task")
+        return {"error": str(e)}, 500
+
+
+@app.post("/tasks/<task_id>/uncomplete")
+@tracer.capture_method
+def uncomplete_task(task_id: str):
+    """Undo completion of a task for its current window."""
+    try:
+        user_id = _current_user_id()
+        task = task_service.uncomplete_task(user_id, task_id, tz=_current_tz())
+        if task is None:
+            return {"error": "Task not found"}, 404
+        metrics.add_metric(name="TaskUncompleted", unit="Count", value=1)
+        return {"task": task}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error uncompleting task")
+        return {"error": str(e)}, 500
+
+
+@app.get("/tasks/<task_id>")
+@tracer.capture_method
+def get_task(task_id: str):
+    """Get a specific task with computed status."""
+    try:
+        user_id = _current_user_id()
+        task = task_service.get_task(user_id, task_id, tz=_current_tz())
+        if not task:
+            return {"error": "Task not found"}, 404
+        return {"task": task}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error getting task")
+        return {"error": str(e)}, 500
+
+
+@app.put("/tasks/<task_id>")
+@tracer.capture_method
+def update_task(task_id: str):
+    """Update a task."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        if 'tags' in data and not isinstance(data['tags'], list):
+            return {"error": "Invalid value for 'tags': must be a list"}, 400
+        task = task_service.update_task(user_id, task_id, data, tz=_current_tz())
+        if not task:
+            return {"error": "Task not found"}, 404
+        metrics.add_metric(name="TaskUpdated", unit="Count", value=1)
+        return {"task": task}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error updating task: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error updating task")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/tasks/<task_id>")
+@tracer.capture_method
+def delete_task(task_id: str):
+    """Delete a task."""
+    try:
+        user_id = _current_user_id()
+        success = task_service.delete_task(user_id, task_id)
+        if not success:
+            return {"error": "Task not found"}, 404
+        metrics.add_metric(name="TaskDeleted", unit="Count", value=1)
+        return {"message": "Task deleted successfully"}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error deleting task")
         return {"error": str(e)}, 500
 
 

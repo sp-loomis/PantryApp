@@ -6,21 +6,22 @@
  *   - desktop (lg+): a left sidebar
  * One component, driven by Chakra responsive props. Content renders via <Outlet/>.
  *
- * Tabs: Search · Locations · Tags · [+ Add]
+ * Tabs: Search · Locations · Tasks · Tags · [+ Add]
  */
 
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Box, Flex, HStack, VStack, Text, Heading } from '@chakra-ui/react';
-import { SearchIcon, LocationIcon, TagIcon, PlusIcon } from './icons';
+import { SearchIcon, LocationIcon, TaskIcon, TagIcon, PlusIcon } from './icons';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Search', icon: SearchIcon, end: true },
   { to: '/locations', label: 'Locations', icon: LocationIcon },
+  { to: '/tasks', label: 'Tasks', icon: TaskIcon },
   { to: '/tags', label: 'Tags', icon: TagIcon },
   { to: '/items/new', label: 'Add', icon: PlusIcon, accent: true },
 ];
 
-const APP_NAME = import.meta.env.VITE_APP_NAME || 'Pantry App';
+const APP_NAME = import.meta.env.VITE_APP_NAME || 'Homestead Manager';
 
 /** True when the current path should mark a nav item active. */
 function useIsActive() {

@@ -22,6 +22,9 @@ import ItemDetailPage from './pages/ItemDetailPage';
 import ItemFormPage from './pages/ItemFormPage';
 import TagsPage from './pages/TagsPage';
 import TagDetailPage from './pages/TagDetailPage';
+import TasksDashboardPage from './pages/TasksDashboardPage';
+import TaskDetailPage from './pages/TaskDetailPage';
+import TaskFormPage from './pages/TaskFormPage';
 import theme from './theme/theme';
 
 /** Protected layout: auth gate + inventory state + the app nav shell. */
@@ -56,6 +59,10 @@ function App() {
               <Route path="/items/new" element={<ItemFormPage />} />
               <Route path="/items/:itemId" element={<ItemDetailPage />} />
               <Route path="/items/:itemId/edit" element={<ItemFormPage />} />
+              <Route path="/tasks" element={<TasksDashboardPage />} />
+              <Route path="/tasks/new" element={<TaskFormPage />} />
+              <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+              <Route path="/tasks/:taskId/edit" element={<TaskFormPage />} />
               <Route path="/tags" element={<TagsPage />} />
               <Route path="/tags/:tag" element={<TagDetailPage />} />
             </Route>

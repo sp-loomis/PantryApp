@@ -19,6 +19,7 @@ from local_schema import (
     ITEMS_TABLE,
     ITEM_TAGS_TABLE,
     LOCATIONS_TABLE,
+    TASKS_TABLE,
     TABLE_NAMES,
     create_tables,
 )
@@ -50,12 +51,13 @@ def main() -> None:
             raise
 
     # Import services AFTER env/tables are ready.
-    from services import ItemService, LocationService
+    from services import ItemService, LocationService, TaskService
 
     location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
     item_service = ItemService(
         dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE)
     )
+    task_service = TaskService(dynamodb.Table(TASKS_TABLE))
 
     # Idempotency guard: seeding creates fresh (uuid-keyed) records every run, so
     # re-running would duplicate data. Skip if this user already has locations.
@@ -98,6 +100,27 @@ def main() -> None:
         print(f"  + {created['name']} ({created['item_id']})")
 
     print(f"\nSeeded {len(samples)} items for user '{DEV_USER_ID}'.")
+
+    # Sample tasks: a mix of recurring chores and one-shot deadlines.
+    task_samples = [
+        # name, notes, tags, recurrence_type, interval, anchor, due, graceful
+        ("Water the garden", "", ["garden"], "daily", None, None, None, True),
+        ("Feed the chickens", "Morning and evening", ["animals"], "daily", None, None, None, True),
+        ("Take out compost", "", ["kitchen"], "weekly", None, None, None, True),
+        ("Deep clean the coop", "", ["animals"], "interval", 14, None, None, True),
+        ("Renew tool insurance", "", ["admin"], "none", None, None, _iso_in_days(5), True),
+        ("Return library books", "", [], "none", None, None, _iso_in_days(-2), True),
+    ]
+
+    for name, notes, tags, rtype, interval, anchor, due, graceful in task_samples:
+        created = task_service.create_task(
+            DEV_USER_ID, name, notes=notes, tags=tags,
+            recurrence_type=rtype, recurrence_interval=interval,
+            anchor_date=anchor, due_date=due, graceful=graceful, tz="UTC",
+        )
+        print(f"  * {created['name']} ({created['task_id']})")
+
+    print(f"Seeded {len(task_samples)} tasks for user '{DEV_USER_ID}'.")
 
 
 if __name__ == "__main__":

@@ -22,12 +22,14 @@ import {
   RiFridgeLine,
   RiPriceTag3Line,
   RiAddCircleLine,
+  RiCalendarTodoLine,
 } from 'react-icons/ri';
 
 export const SearchIcon = (props) => <Icon as={RiSearch2Line} {...props} />;
 export const LocationIcon = (props) => <Icon as={RiFridgeLine} {...props} />;
 export const TagIcon = (props) => <Icon as={RiPriceTag3Line} {...props} />;
 export const PlusIcon = (props) => <Icon as={RiAddCircleLine} {...props} />;
+export const TaskIcon = (props) => <Icon as={RiCalendarTodoLine} {...props} />;
 export const ChevronRightIcon = (props) => <Icon as={FiChevronRight} {...props} />;
 export const BackIcon = (props) => <Icon as={FiArrowLeft} {...props} />;
 export const EditIcon = (props) => <Icon as={FiEdit2} {...props} />;

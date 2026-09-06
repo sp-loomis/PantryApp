@@ -36,6 +36,15 @@ export {
   listTags,
   searchItems
 } from './services/inventoryService.js';
+export {
+  listTasks,
+  getTask,
+  createTask,
+  updateTask,
+  deleteTask,
+  completeTask,
+  uncompleteTask
+} from './services/taskService.js';
 
 // Hooks
 export { useAuth } from './hooks/useAuth.js';
@@ -48,7 +57,9 @@ export {
   validatePasswordConfirmation,
   validateVerificationCode,
   validateItemName,
-  validateLocationName
+  validateLocationName,
+  validateTaskName,
+  validateRecurrence
 } from './utils/validation.js';
 export {
   MEASURE_TYPES,

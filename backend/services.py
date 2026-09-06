@@ -10,11 +10,14 @@ from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 from aws_lambda_powertools import Logger
 
-from models import Item, Location, ItemTag
+from models import Item, Location, ItemTag, Task
 from dimensions import (
     Dimension, DimensionType, validate_dimension, aggregate_dimensions
 )
 from search import match_name, DEFAULT_MIN_SCORE
+from recurrence import (
+    RECURRENCE_TYPES, compute_status, current_window_key, local_now,
+)
 
 logger = Logger(child=True)
 
@@ -647,3 +650,286 @@ class ItemService:
         dim_types = [d.get("dimension_type") for d in dimensions]
         if len(dim_types) != len(set(dim_types)):
             raise ValueError("Duplicate dimension types not allowed")
+
+
+class TaskService:
+    """Service for managing tasks/chores (one-shot and recurring).
+
+    Recurring tasks are stored as a single row plus a rule; their status is
+    computed on read via ``recurrence.compute_status`` from the caller's
+    timezone. No occurrence rows, no history, no scheduled cleanup — see
+    ``recurrence.py`` for the "graceful disappearance" model.
+    """
+
+    def __init__(self, tasks_table):
+        self.tasks_table = tasks_table
+
+    @staticmethod
+    def _deserialize_task(task: Dict[str, Any]) -> Dict[str, Any]:
+        """Guarantee a stable task shape for API responses.
+
+        Tasks stored without a ``due_date`` (the sparse-index key) omit it; the
+        other optional fields are surfaced as None so every response has the
+        same keys.
+        """
+        task.setdefault("notes", "")
+        task.setdefault("tags", [])
+        task.setdefault("recurrence_type", "none")
+        task.setdefault("recurrence_interval", None)
+        task.setdefault("anchor_date", None)
+        task.setdefault("due_date", None)
+        task.setdefault("graceful", True)
+        task.setdefault("last_completed_window", None)
+        task.setdefault("last_completed_at", None)
+        return task
+
+    def _with_status(
+        self, task: Dict[str, Any], tz: Optional[str], now: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """Normalize a raw task and merge its computed status fields."""
+        task = self._deserialize_task(task)
+        task.update(compute_status(task, tz, now))
+        return task
+
+    def create_task(
+        self,
+        user_id: str,
+        name: str,
+        notes: str = "",
+        tags: List[str] = None,
+        recurrence_type: str = "none",
+        recurrence_interval: Optional[int] = None,
+        anchor_date: Optional[str] = None,
+        due_date: Optional[str] = None,
+        graceful: bool = True,
+        tz: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a task, validating its recurrence rule."""
+        tags = [t.lower() for t in (tags or [])]
+        self._validate_recurrence(recurrence_type, recurrence_interval, anchor_date, due_date)
+
+        # Interval tasks need a stable anchor; default to "today" (in the
+        # caller's tz) so windows are computed from creation onward.
+        if recurrence_type == "interval" and not anchor_date:
+            anchor_date = local_now(tz).date().isoformat()
+
+        task = Task.create(
+            user_id=user_id,
+            name=name,
+            notes=notes,
+            tags=tags,
+            recurrence_type=recurrence_type,
+            recurrence_interval=recurrence_interval,
+            anchor_date=anchor_date,
+            due_date=due_date,
+            graceful=graceful,
+        )
+
+        storage_dict = task.to_dict()
+        # due_date backs a sparse GSI: a NULL value is rejected on an index key,
+        # so omit the attribute entirely when there is no deadline.
+        if storage_dict.get("due_date") is None:
+            storage_dict.pop("due_date", None)
+        self.tasks_table.put_item(Item=storage_dict)
+
+        logger.info(f"Created task: {task.task_id} for user: {user_id}")
+        return self._with_status(task.to_dict(), tz)
+
+    def get_task(self, user_id: str, task_id: str, tz: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a task by ID for a specific user, with computed status."""
+        response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
+        task = response.get("Item")
+        if not task:
+            return None
+        return self._with_status(task, tz)
+
+    def list_tasks(
+        self,
+        user_id: str,
+        tz: Optional[str] = None,
+        status: Optional[str] = None,
+        tag: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List a user's tasks with computed status.
+
+        ``status`` filters the computed status: ``active`` (the default view of
+        what needs doing now), ``done`` (completed for the current window), or
+        None/``all`` for everything. ``tag`` narrows by a denormalized tag. All
+        tasks are evaluated against a single ``now`` for a consistent snapshot.
+        """
+        response = self.tasks_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id)
+        )
+        now = local_now(tz)
+        tasks = [self._with_status(t, tz, now) for t in response.get("Items", [])]
+
+        if tag:
+            wanted = tag.lower()
+            tasks = [t for t in tasks if wanted in t.get("tags", [])]
+
+        if status == "active":
+            tasks = [t for t in tasks if t["active"]]
+        elif status == "done":
+            tasks = [t for t in tasks if t["done"]]
+
+        return tasks
+
+    def update_task(
+        self, user_id: str, task_id: str, updates: Dict[str, Any], tz: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Partially update a task for a specific user."""
+        response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
+        existing = response.get("Item")
+        if not existing:
+            return None
+        existing = self._deserialize_task(existing)
+
+        # Validate against the merged view so a partial recurrence change (e.g.
+        # switching to "interval") is checked with its companion fields.
+        recurrence_fields = ("recurrence_type", "recurrence_interval", "anchor_date", "due_date")
+        if any(f in updates for f in recurrence_fields):
+            merged = {**existing, **updates}
+            self._validate_recurrence(
+                merged.get("recurrence_type", "none"),
+                merged.get("recurrence_interval"),
+                merged.get("anchor_date"),
+                merged.get("due_date"),
+            )
+
+        set_parts = ["updated_at = :updated_at"]
+        remove_parts = []
+        expr_values = {":updated_at": _now_iso()}
+        expr_names = {}
+
+        if "name" in updates:
+            set_parts.append("#n = :name")
+            expr_values[":name"] = updates["name"]
+            expr_names["#n"] = "name"
+
+        for field_name in ("notes", "recurrence_type", "recurrence_interval", "anchor_date", "graceful"):
+            if field_name in updates:
+                set_parts.append(f"{field_name} = :{field_name}")
+                expr_values[f":{field_name}"] = updates[field_name]
+
+        if "tags" in updates:
+            set_parts.append("#tags = :tags")
+            expr_values[":tags"] = sorted({t.lower() for t in updates["tags"]})
+            expr_names["#tags"] = "tags"
+
+        if "due_date" in updates:
+            # due_date backs a sparse GSI, so clearing it must REMOVE the
+            # attribute rather than SET it to NULL.
+            if updates["due_date"] is None:
+                remove_parts.append("due_date")
+            else:
+                set_parts.append("due_date = :due_date")
+                expr_values[":due_date"] = updates["due_date"]
+
+        update_expr = "SET " + ", ".join(set_parts)
+        if remove_parts:
+            update_expr += " REMOVE " + ", ".join(remove_parts)
+
+        update_kwargs = {
+            "Key": {"user_id": user_id, "task_id": task_id},
+            "UpdateExpression": update_expr,
+            "ExpressionAttributeValues": expr_values,
+            "ReturnValues": "ALL_NEW",
+        }
+        if expr_names:
+            update_kwargs["ExpressionAttributeNames"] = expr_names
+
+        response = self.tasks_table.update_item(**update_kwargs)
+        attributes = response.get("Attributes")
+        if not attributes:
+            return None
+
+        logger.info(f"Updated task: {task_id} for user: {user_id}")
+        return self._with_status(attributes, tz)
+
+    def complete_task(
+        self, user_id: str, task_id: str, tz: Optional[str] = None, now: Optional[Any] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Mark a task complete for its current window (recurring) or lifetime (one-shot)."""
+        response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
+        task = response.get("Item")
+        if not task:
+            return None
+        task = self._deserialize_task(task)
+
+        now_local = local_now(tz, now)
+        set_parts = ["updated_at = :updated_at", "last_completed_at = :completed_at"]
+        expr_values = {":updated_at": _now_iso(), ":completed_at": _now_iso()}
+
+        # Recurring tasks record *which* window was completed so they reappear
+        # once the window rolls over.
+        if task.get("recurrence_type", "none") != "none":
+            set_parts.append("last_completed_window = :window")
+            expr_values[":window"] = current_window_key(task, now_local)
+
+        response = self.tasks_table.update_item(
+            Key={"user_id": user_id, "task_id": task_id},
+            UpdateExpression="SET " + ", ".join(set_parts),
+            ExpressionAttributeValues=expr_values,
+            ReturnValues="ALL_NEW",
+        )
+        logger.info(f"Completed task: {task_id} for user: {user_id}")
+        return self._with_status(response["Attributes"], tz, now)
+
+    def uncomplete_task(
+        self, user_id: str, task_id: str, tz: Optional[str] = None, now: Optional[Any] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Undo completion for the current window, making the task active again."""
+        response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
+        if not response.get("Item"):
+            return None
+
+        response = self.tasks_table.update_item(
+            Key={"user_id": user_id, "task_id": task_id},
+            UpdateExpression="SET updated_at = :updated_at REMOVE last_completed_at, last_completed_window",
+            ExpressionAttributeValues={":updated_at": _now_iso()},
+            ReturnValues="ALL_NEW",
+        )
+        logger.info(f"Uncompleted task: {task_id} for user: {user_id}")
+        return self._with_status(response["Attributes"], tz, now)
+
+    def delete_task(self, user_id: str, task_id: str) -> bool:
+        """Delete a task for a specific user.
+
+        Returns False when the task does not exist so callers can surface a 404
+        (DynamoDB's delete_item succeeds unconditionally, so we check first).
+        """
+        response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
+        if not response.get("Item"):
+            return False
+        self.tasks_table.delete_item(Key={"user_id": user_id, "task_id": task_id})
+        logger.info(f"Deleted task: {task_id} for user: {user_id}")
+        return True
+
+    @staticmethod
+    def _validate_recurrence(
+        recurrence_type: Any,
+        recurrence_interval: Any,
+        anchor_date: Any,
+        due_date: Any,
+    ) -> None:
+        """Validate a recurrence rule, raising ValueError on any problem."""
+        if recurrence_type not in RECURRENCE_TYPES:
+            raise ValueError(
+                f"Invalid recurrence_type: {recurrence_type!r} "
+                f"(must be one of {sorted(RECURRENCE_TYPES)})"
+            )
+        if recurrence_type == "interval":
+            if (
+                isinstance(recurrence_interval, bool)
+                or not isinstance(recurrence_interval, int)
+                or recurrence_interval < 1
+            ):
+                raise ValueError(
+                    "recurrence_interval must be a positive integer for interval tasks"
+                )
+        for label, value in (("anchor_date", anchor_date), ("due_date", due_date)):
+            if value is not None:
+                try:
+                    datetime.fromisoformat(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f"Invalid {label}: must be an ISO-8601 date")

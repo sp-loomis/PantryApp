@@ -114,9 +114,28 @@ def invoke_lambda(method: str, path: str, body: Optional[dict] = None, query_par
         sys.exit(1)
 
 
+def _default_tz() -> str:
+    """Best-effort IANA timezone name for task-window computation.
+
+    Task windows (today / this week / interval slots) are computed server-side
+    in this timezone. Falls back to UTC when the local zone can't be resolved;
+    users can always override with ``--tz``.
+    """
+    tz = os.environ.get('TZ')
+    if tz:
+        return tz
+    try:
+        link = os.readlink('/etc/localtime')
+        if 'zoneinfo/' in link:
+            return link.split('zoneinfo/')[-1]
+    except OSError:
+        pass
+    return 'UTC'
+
+
 @click.group()
 def cli():
-    """Pantry App CLI - Manage your storage locations and inventory."""
+    """Pantry App CLI - Manage your storage locations, inventory, and tasks."""
     pass
 
 
@@ -453,6 +472,204 @@ def item_tag_add(item_id: str, tags: str):
 def item_tag_remove(item_id: str, tag: str):
     """Remove a single tag from an item."""
     result = invoke_lambda('DELETE', f'/items/{item_id}/tags/{tag}')
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+# ============================================================================
+# Task Commands
+# ============================================================================
+
+@cli.group()
+def task():
+    """Manage tasks and chores (one-shot and recurring)."""
+    pass
+
+
+@task.command(name='create')
+@click.option('--name', required=True, help='Task name')
+@click.option('--notes', default='', help='Additional notes')
+@click.option('--tags', help='Comma-separated tags')
+@click.option('--recurrence', type=click.Choice(['none', 'daily', 'weekly', 'interval']),
+              default='none', help='Recurrence type (default none = one-shot)')
+@click.option('--interval', type=int, help='Repeat every N days (required for --recurrence interval)')
+@click.option('--anchor', help='Anchor/start date for interval tasks (YYYY-MM-DD)')
+@click.option('--due', help='Due date for one-shot tasks (YYYY-MM-DD)')
+@click.option('--graceful/--no-graceful', default=True,
+              help='One-shot: self-hide once past due instead of nagging (default graceful)')
+@click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
+@click.option('--user-id', help='[Admin only] Create task for specific user')
+def create_task(name: str, notes: str, tags: Optional[str], recurrence: str,
+                interval: Optional[int], anchor: Optional[str], due: Optional[str],
+                graceful: bool, tz: Optional[str], user_id: Optional[str]):
+    """Create a new task (one-shot or recurring)."""
+    task_data = {
+        'name': name,
+        'notes': notes,
+        'recurrence_type': recurrence,
+        'graceful': graceful,
+    }
+    if interval is not None:
+        task_data['recurrence_interval'] = interval
+    if tags:
+        task_data['tags'] = [tag.strip() for tag in tags.split(',') if tag.strip()]
+    if anchor:
+        try:
+            task_data['anchor_date'] = parse_date(anchor).isoformat()
+        except ValueError:
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
+            sys.exit(1)
+    if due:
+        try:
+            task_data['due_date'] = parse_date(due).isoformat()
+        except ValueError:
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
+            sys.exit(1)
+
+    result = invoke_lambda('POST', '/tasks', task_data,
+                           query_params={'tz': tz or _default_tz()}, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@task.command(name='list')
+@click.option('--status', type=click.Choice(['active', 'done', 'all']), default='active',
+              help='Filter by computed status (default active)')
+@click.option('--tag', help='Filter by tag')
+@click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
+@click.option('--user-id', help='[Admin only] List tasks for specific user')
+def list_tasks(status: str, tag: Optional[str], tz: Optional[str], user_id: Optional[str]):
+    """List tasks with computed urgency status."""
+    query_params = {'tz': tz or _default_tz()}
+    if status != 'all':
+        query_params['status'] = status
+    if tag:
+        query_params['tag'] = tag
+
+    result = invoke_lambda('GET', '/tasks', query_params=query_params, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@task.command(name='get')
+@click.argument('task_id')
+@click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
+@click.option('--user-id', help='[Admin only] Get task for specific user')
+def get_task(task_id: str, tz: Optional[str], user_id: Optional[str]):
+    """Get details of a specific task."""
+    result = invoke_lambda('GET', f'/tasks/{task_id}',
+                           query_params={'tz': tz or _default_tz()}, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@task.command(name='update')
+@click.argument('task_id')
+@click.option('--name', help='New task name')
+@click.option('--notes', help='New notes')
+@click.option('--tags', help='New comma-separated tags')
+@click.option('--recurrence', type=click.Choice(['none', 'daily', 'weekly', 'interval']),
+              help='New recurrence type')
+@click.option('--interval', type=int, help='New repeat interval in days')
+@click.option('--anchor', help='New anchor/start date (YYYY-MM-DD)')
+@click.option('--due', help='New due date (YYYY-MM-DD)')
+@click.option('--graceful/--no-graceful', default=None,
+              help='Toggle graceful self-hide for one-shot tasks')
+@click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
+@click.option('--user-id', help='[Admin only] Update task for specific user')
+def update_task(task_id: str, name: Optional[str], notes: Optional[str], tags: Optional[str],
+                recurrence: Optional[str], interval: Optional[int], anchor: Optional[str],
+                due: Optional[str], graceful: Optional[bool], tz: Optional[str],
+                user_id: Optional[str]):
+    """Update a task."""
+    updates = {}
+    if name:
+        updates['name'] = name
+    if notes is not None:
+        updates['notes'] = notes
+    if tags:
+        updates['tags'] = [tag.strip() for tag in tags.split(',') if tag.strip()]
+    if recurrence:
+        updates['recurrence_type'] = recurrence
+    if interval is not None:
+        updates['recurrence_interval'] = interval
+    if anchor:
+        try:
+            updates['anchor_date'] = parse_date(anchor).isoformat()
+        except ValueError:
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
+            sys.exit(1)
+    if due:
+        try:
+            updates['due_date'] = parse_date(due).isoformat()
+        except ValueError:
+            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
+            sys.exit(1)
+    if graceful is not None:
+        updates['graceful'] = graceful
+
+    if not updates:
+        print(json.dumps({"error": "No updates provided"}, indent=2))
+        sys.exit(1)
+
+    result = invoke_lambda('PUT', f'/tasks/{task_id}', updates,
+                           query_params={'tz': tz or _default_tz()}, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@task.command(name='complete')
+@click.argument('task_id')
+@click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
+@click.option('--user-id', help='[Admin only] Complete task for specific user')
+def complete_task(task_id: str, tz: Optional[str], user_id: Optional[str]):
+    """Mark a task complete for its current window."""
+    result = invoke_lambda('POST', f'/tasks/{task_id}/complete',
+                           query_params={'tz': tz or _default_tz()}, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@task.command(name='uncomplete')
+@click.argument('task_id')
+@click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
+@click.option('--user-id', help='[Admin only] Uncomplete task for specific user')
+def uncomplete_task(task_id: str, tz: Optional[str], user_id: Optional[str]):
+    """Undo completion of a task for its current window."""
+    result = invoke_lambda('POST', f'/tasks/{task_id}/uncomplete',
+                           query_params={'tz': tz or _default_tz()}, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@task.command(name='delete')
+@click.argument('task_id')
+@click.option('--user-id', help='[Admin only] Delete task for specific user')
+@click.confirmation_option(prompt='Are you sure you want to delete this task?')
+def delete_task(task_id: str, user_id: Optional[str]):
+    """Delete a task."""
+    result = invoke_lambda('DELETE', f'/tasks/{task_id}', user_id=user_id)
 
     print(json.dumps(result, indent=2))
 

@@ -1,6 +1,8 @@
-# Pantry App - Inventory Management System
+# Homestead Manager
 
-A serverless inventory management system for tracking items across multiple storage locations. Built with AWS Lambda, DynamoDB, and a Python CLI that maintains strict alignment with the REST API.
+A serverless homestead management system: track pantry **inventory** across storage locations *and* stay on top of **tasks and chores** — one-shot deadlines plus recurring daily/weekly/every-N-days routines that gracefully disappear when a window passes. Built with AWS Lambda, DynamoDB, a React web app, and a Python CLI that maintains strict alignment with the REST API.
+
+> Formerly "Pantry App" — the inventory features are unchanged; task tracking is the latest addition.
 
 ## Quick Start
 

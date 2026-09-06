@@ -110,3 +110,33 @@ export function validateLocationName(name) {
   }
   return null;
 }
+
+/**
+ * Validate a task name
+ * @param {string} name
+ * @returns {string|null} Error message or null if valid
+ */
+export function validateTaskName(name) {
+  if (!name || !name.trim()) {
+    return 'Task name is required';
+  }
+  return null;
+}
+
+/**
+ * Validate a task's recurrence rule.
+ * @param {{recurrence_type?: string, recurrence_interval?: number}} rule
+ * @returns {string|null} Error message or null if valid
+ */
+export function validateRecurrence({ recurrence_type = 'none', recurrence_interval } = {}) {
+  const allowed = ['none', 'daily', 'weekly', 'interval'];
+  if (!allowed.includes(recurrence_type)) {
+    return 'Invalid recurrence type';
+  }
+  if (recurrence_type === 'interval') {
+    if (!Number.isInteger(recurrence_interval) || recurrence_interval < 1) {
+      return 'Repeat interval must be a whole number of days (at least 1)';
+    }
+  }
+  return null;
+}

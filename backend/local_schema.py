@@ -16,11 +16,13 @@ from typing import Any, Dict
 ITEMS_TABLE = "pantry-local-items"
 LOCATIONS_TABLE = "pantry-local-locations"
 ITEM_TAGS_TABLE = "pantry-local-item-tags"
+TASKS_TABLE = "pantry-local-tasks"
 
 TABLE_NAMES = {
     "ITEMS_TABLE_NAME": ITEMS_TABLE,
     "LOCATIONS_TABLE_NAME": LOCATIONS_TABLE,
     "ITEM_TAGS_TABLE_NAME": ITEM_TAGS_TABLE,
+    "TASKS_TABLE_NAME": TASKS_TABLE,
 }
 
 
@@ -80,4 +82,18 @@ def create_tables(dynamodb) -> None:
             {"AttributeName": "tag_name", "AttributeType": "S"},
         ],
         GlobalSecondaryIndexes=[_gsi("TagIndex", "user_id", "tag_name")],
+    )
+    dynamodb.create_table(
+        TableName=TASKS_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "task_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "task_id", "AttributeType": "S"},
+            {"AttributeName": "due_date", "AttributeType": "S"},
+        ],
+        GlobalSecondaryIndexes=[_gsi("DueDateIndex", "user_id", "due_date")],
     )

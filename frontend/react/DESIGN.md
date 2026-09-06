@@ -699,8 +699,27 @@ One responsive shell (`web/src/components/AppShell.jsx`):
 | Item form         | Create / edit (with the measure control)                              | `POST` / `PUT /items`                            |
 | Tags index        | All tags                                                              | `GET /tags`                                      |
 | Tag detail        | Items with a tag                                                      | `GET /items?tag=`                                |
+| Tasks dashboard   | Active tasks grouped by urgency; check off inline                     | `GET /tasks?status=active`, `POST /tasks/<id>/complete` |
+| Task detail       | Full task; complete/undo; edit/delete                                | `GET /tasks/<id>`                                |
+| Task form         | Create / edit (with the recurrence control)                          | `POST` / `PUT /tasks`                            |
 
 "Expiring soon" is a **date filter** on Search (`use_by_date_end`), not a page.
+
+### Task model
+
+- A **task** mirrors an item-with-deadline, adding **recurrence**. Types:
+  `none` (one-shot with an optional `due_date`), `daily`, `weekly`, `interval`
+  (every N days from an `anchor_date`).
+- **Recurring tasks are computed, not materialized**: a single row + a rule; the
+  server derives the current window's status on read (in the client's timezone,
+  sent as `tz`). Completion is recorded per-window (`last_completed_window`), so
+  a missed window never piles up — it just reappears next window. See
+  `backend/recurrence.py`.
+- One-shot tasks can be **graceful** (`graceful: true`) — they self-hide once
+  past due instead of nagging as overdue.
+- No history is kept (purely current-state). Urgency badges reuse the
+  `expiryStatus` palette (overdue/today red, soon orange, else gray) via
+  `web/src/utils/taskStatus.js`.
 
 ### Item & dimension model
 

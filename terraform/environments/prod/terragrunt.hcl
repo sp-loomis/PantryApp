@@ -8,10 +8,14 @@ locals {
   root_vars   = read_terragrunt_config(find_in_parent_folders("root.hcl"))
   global_vars = read_terragrunt_config(find_in_parent_folders("globals.hcl"))
 
-  name_prefix = local.root_vars.locals.name_prefix
-
   # Environment-specific variables for prod
   environment        = "prod"
+
+  # Build name_prefix from THIS file's explicit environment. Do not reuse
+  # root_vars.locals.name_prefix: root.hcl derives the environment from
+  # path_relative_to_include(), which only resolves inside an include chain and
+  # returns "." (falling back to "dev") when read via read_terragrunt_config().
+  name_prefix = "${local.environment}-${local.root_vars.locals.region_abbr}-${local.root_vars.locals.project_name}"
   lambda_memory_size = 512
   log_retention_days = 30
 

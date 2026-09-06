@@ -50,9 +50,9 @@ cp .env.example .env
 Edit `.env` and add your AWS Cognito credentials:
 
 ```env
-VITE_COGNITO_USER_POOL_ID=us-east-2_xxxxxxxxx
+VITE_COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
 VITE_COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-VITE_AWS_REGION=us-east-2
+VITE_AWS_REGION=us-east-1
 ```
 
 ### 3. Start Development Server
@@ -125,6 +125,7 @@ frontend/react/web/
 ## Authentication Flow
 
 ### Signup
+
 1. User enters email and password on `/signup`
 2. Password validated (8+ chars, upper, lower, number)
 3. AWS Cognito creates user (unconfirmed)
@@ -132,11 +133,13 @@ frontend/react/web/
 5. Redirect to `/confirm`
 
 ### Email Confirmation
+
 1. User enters email and 6-digit code on `/confirm`
 2. AWS Cognito confirms user account
 3. Redirect to `/login` with success message
 
 ### Login
+
 1. User enters email and password on `/login`
 2. AWS Cognito validates credentials
 3. Tokens stored securely by Amplify
@@ -144,11 +147,13 @@ frontend/react/web/
 5. Redirect to `/` (home)
 
 ### Protected Access
+
 1. `ProtectedRoute` checks authentication status
 2. Authenticated: render page
 3. Not authenticated: redirect to `/login`
 
 ### Logout
+
 1. User clicks "Sign Out" on home page
 2. AWS Amplify clears tokens
 3. Context updated (user = null)
@@ -156,13 +161,13 @@ frontend/react/web/
 
 ## Environment Variables
 
-| Variable | Description | Required | Example |
-|----------|-------------|----------|---------|
-| `VITE_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID | Yes | `us-east-2_abc123xyz` |
-| `VITE_COGNITO_CLIENT_ID` | App Client ID (public) | Yes | `1234567890abcdef` |
-| `VITE_AWS_REGION` | AWS Region | Yes | `us-east-2` |
-| `VITE_APP_NAME` | Application name | No | `Pantry App` |
-| `VITE_APP_URL` | Application URL | No | `http://localhost:5173` |
+| Variable                    | Description              | Required | Example                 |
+| --------------------------- | ------------------------ | -------- | ----------------------- |
+| `VITE_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID | Yes      | `us-east-1_abc123xyz`   |
+| `VITE_COGNITO_CLIENT_ID`    | App Client ID (public)   | Yes      | `1234567890abcdef`      |
+| `VITE_AWS_REGION`           | AWS Region               | Yes      | `us-east-1`             |
+| `VITE_APP_NAME`             | Application name         | No       | `Pantry App`            |
+| `VITE_APP_URL`              | Application URL          | No       | `http://localhost:5173` |
 
 ## Building for Production
 
@@ -192,6 +197,7 @@ aws cloudfront create-invalidation \
 ### Environment Variables in Production
 
 Set production environment variables in your deployment environment:
+
 - AWS Amplify Console: Environment variables section
 - S3 + CloudFront: Build the app with production `.env` before deploying
 - Vercel/Netlify: Add in dashboard settings
@@ -199,19 +205,23 @@ Set production environment variables in your deployment environment:
 ## Troubleshooting
 
 ### "User pool does not exist"
+
 - Check `VITE_COGNITO_USER_POOL_ID` in `.env`
 - Ensure User Pool exists in specified region
 
 ### "Client does not exist"
+
 - Check `VITE_COGNITO_CLIENT_ID` in `.env`
 - Ensure App Client exists in User Pool
 
 ### "User not authenticated" on refresh
+
 - Check browser localStorage (should have Amplify tokens)
 - Ensure tokens haven't expired
 - Check browser console for errors
 
 ### Build errors
+
 - Delete `node_modules` and `package-lock.json`
 - Run `npm install` from project root
 - Ensure Node.js 18+ is installed

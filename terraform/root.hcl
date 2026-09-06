@@ -4,8 +4,8 @@
 locals {
   # Project-wide settings
   project_name = "pantry"
-  region       = "us-east-2"
-  region_abbr  = "use2"
+  region       = "us-east-1"
+  region_abbr  = "use1"
 
   # Parse environment from the directory structure
   # The terragrunt.hcl files are in terraform/environments/{env}/

@@ -30,6 +30,7 @@ mobile-friendliness as a first-class design principle.
 ### Scope
 
 **In Scope:**
+
 - User signup with email verification
 - User login/logout
 - Protected route handling
@@ -39,6 +40,7 @@ mobile-friendliness as a first-class design principle.
 - **Inventory management UI (v2):** locations, items, tags, search — mobile-first
 
 **Out of Scope:**
+
 - Password reset
 - Social authentication
 - MFA
@@ -82,18 +84,18 @@ mobile-friendliness as a first-class design principle.
 
 ## Technology Stack
 
-| Category | Technology | Version | Rationale |
-|----------|-----------|---------|-----------|
-| **Framework** | React | 18+ | Industry standard, mobile support via React Native |
-| **Build Tool** | Vite | 5+ | Fast dev server, modern tooling |
-| **UI Library** | Chakra UI | 2+ | Complete component system, accessibility built-in |
-| **Routing** | React Router | 6+ | Standard client-side routing |
-| **Backend** | AWS Amplify | 6+ | Official AWS SDK, modular, works web + mobile |
-| **Forms** | React Hook Form | 7+ | Performant, good validation support |
-| **State** | React Context | Built-in | Sufficient for auth state |
-| **Testing** | Vitest | 1+ | Native Vite integration, fast |
-| **Testing** | React Testing Library | 14+ | User-centric testing, industry standard |
-| **E2E** | Playwright | 1+ | Multi-browser support (optional for MVP) |
+| Category       | Technology            | Version  | Rationale                                          |
+| -------------- | --------------------- | -------- | -------------------------------------------------- |
+| **Framework**  | React                 | 18+      | Industry standard, mobile support via React Native |
+| **Build Tool** | Vite                  | 5+       | Fast dev server, modern tooling                    |
+| **UI Library** | Chakra UI             | 2+       | Complete component system, accessibility built-in  |
+| **Routing**    | React Router          | 6+       | Standard client-side routing                       |
+| **Backend**    | AWS Amplify           | 6+       | Official AWS SDK, modular, works web + mobile      |
+| **Forms**      | React Hook Form       | 7+       | Performant, good validation support                |
+| **State**      | React Context         | Built-in | Sufficient for auth state                          |
+| **Testing**    | Vitest                | 1+       | Native Vite integration, fast                      |
+| **Testing**    | React Testing Library | 14+      | User-centric testing, industry standard            |
+| **E2E**        | Playwright            | 1+       | Multi-browser support (optional for MVP)           |
 
 ---
 
@@ -199,23 +201,27 @@ export async function getCurrentAuthUser()
 ### Page Components
 
 **LoginPage**
+
 - Login form (email, password)
 - Validation via React Hook Form
 - Error display
 - Link to signup
 
 **SignupPage**
+
 - Signup form (email, password, confirm password)
 - Password strength validation
 - Error handling
 - Link to login
 
 **ConfirmPage**
+
 - Email confirmation form (email, code)
 - Accepts email from navigation state
 - Error handling
 
 **HomePage**
+
 - Welcome message with user email
 - Logout button
 - Protected by ProtectedRoute
@@ -223,15 +229,18 @@ export async function getCurrentAuthUser()
 ### Shared Components
 
 **ProtectedRoute**
+
 - Check authentication from context
 - Redirect to login if not authenticated
 - Show loading state while checking
 
 **AuthLayout**
+
 - Consistent layout for auth pages
 - Centered card on desktop, full-width on mobile
 
 **ErrorMessage**
+
 - Consistent error display
 - Maps Cognito errors to user-friendly messages
 
@@ -242,17 +251,20 @@ export async function getCurrentAuthUser()
 ### Code Sharing
 
 **Shared (~60-70% of code):**
+
 - Auth service (Amplify works both platforms)
 - Business logic and validation
 - Custom hooks
 - Constants and configuration
 
 **Platform-Specific:**
+
 - UI components (Chakra UI vs NativeBase)
 - Navigation (React Router vs React Navigation)
 - Storage (handled by Amplify automatically)
 
 **Migration Path:**
+
 1. Build web with shared logic properly separated
 2. Create mobile package
 3. Import shared business logic
@@ -283,6 +295,7 @@ packages/web/tests/
 ### Testing Philosophy
 
 **Test Priorities (High to Low):**
+
 1. Auth business logic (critical - 85%+ coverage)
 2. User flows (signup, login, logout)
 3. Error handling (auth failures, network errors)
@@ -311,15 +324,15 @@ packages/web/tests/
 export default defineConfig({
   test: {
     globals: true,
-    environment: 'jsdom',
-    setupFiles: './tests/setup.js',
+    environment: "jsdom",
+    setupFiles: "./tests/setup.js",
     coverage: {
-      provider: 'c8',
-      include: ['src/**/*.{js,jsx}'],
-      exclude: ['**/*.test.{js,jsx}', '**/main.jsx']
-    }
-  }
-})
+      provider: "c8",
+      include: ["src/**/*.{js,jsx}"],
+      exclude: ["**/*.test.{js,jsx}", "**/main.jsx"],
+    },
+  },
+});
 ```
 
 ### Mock Strategy
@@ -336,34 +349,40 @@ export default defineConfig({
 ### Key Requirements
 
 **Token Management:**
+
 - Amplify handles token storage (web: encrypted localStorage, mobile: Keychain/Keystore)
 - Automatic token refresh before expiry
 - Tokens cleared on logout and auth errors
 - No manual token manipulation
 
 **Password Handling:**
+
 - Never logged or stored
 - Transmitted only over HTTPS
 - Enforced by Cognito password policy
 - Input type="password" prevents visibility
 
 **Input Validation:**
+
 - Client-side validation for UX (React Hook Form)
 - Server-side validation by Cognito (security)
 - Email format and password strength enforced
 - XSS prevention via React's JSX escaping
 
 **Error Messages:**
+
 - Generic messages don't reveal user existence
 - No stack traces exposed to users
 - Same message for "user not found" and "wrong password"
 
 **HTTPS:**
+
 - All production traffic over HTTPS
 - HTTP redirects to HTTPS
 - CSP headers configured
 
 **Dependencies:**
+
 - Regular `npm audit` checks
 - Automated dependency updates
 - Pin major versions
@@ -376,26 +395,28 @@ export default defineConfig({
 
 ```bash
 # AWS Cognito
-VITE_COGNITO_USER_POOL_ID=us-east-2_xxxxxxxxx
+VITE_COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
 VITE_COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-VITE_AWS_REGION=us-east-2
+VITE_AWS_REGION=us-east-1
 
 # Application
 VITE_APP_NAME=Pantry App
 VITE_APP_URL=https://pantry.example.com
 
 # API (Future)
-VITE_API_GATEWAY_URL=https://xxx.execute-api.us-east-2.amazonaws.com/dev
+VITE_API_GATEWAY_URL=https://xxx.execute-api.us-east-1.amazonaws.com/dev
 ```
 
 ### Cognito Requirements
 
 **User Pool Settings:**
+
 - Username: Email
 - Email verification: Required
 - Password policy: 8+ chars, uppercase, lowercase, numbers
 
 **App Client:**
+
 - Auth flow: USER_PASSWORD_AUTH enabled
 - Client secret: None (public web client)
 - Token expiry: Access/ID 1hr, Refresh 30 days
@@ -419,16 +440,19 @@ Development: `http://localhost:5173`
 ### Build Process
 
 **Development:**
+
 ```bash
 npm run dev              # Vite dev server at localhost:5173
 ```
 
 **Production:**
+
 ```bash
 npm run build            # Output: packages/web/dist/
 ```
 
 **Build Output:**
+
 - Minification and tree-shaking via Vite
 - Code splitting for routes
 - Hashed filenames for cache busting
@@ -437,12 +461,14 @@ npm run build            # Output: packages/web/dist/
 ### Deployment: AWS S3 + CloudFront
 
 **Advantages:**
+
 - Native AWS integration
 - CDN distribution globally
 - HTTPS by default
 - Cost-effective and scalable
 
 **Process:**
+
 ```bash
 npm run build
 aws s3 sync dist/ s3://pantry-app-frontend --delete
@@ -452,6 +478,7 @@ aws cloudfront create-invalidation --distribution-id EXXXXX --paths "/*"
 ### CI/CD Pipeline
 
 **GitHub Actions workflow:**
+
 - Run tests on pull requests
 - Build on main branch push
 - Deploy to S3 if tests pass
@@ -488,6 +515,7 @@ Tests:         *.test.{js,jsx}     (authService.test.js)
 ### Git Workflow
 
 **Branch naming:**
+
 ```
 feature/auth-signup
 bugfix/login-error
@@ -495,6 +523,7 @@ refactor/auth-service
 ```
 
 **Commit messages:**
+
 ```
 feat: add signup page
 fix: handle token expiry
@@ -540,24 +569,29 @@ test: add login flow tests
 ### Non-Functional Requirements
 
 **Performance:**
+
 - Initial load < 2s on 3G
 - Form response < 1s
 - Bundle < 200KB gzipped
 - Lighthouse > 90
 
 **Responsiveness:**
+
 - Works on mobile (320px+), tablet (768px+), desktop (1024px+)
 - Touch-friendly on mobile
 
 **Browser Compatibility:**
+
 - Chrome, Firefox, Safari, Edge (latest 2 versions)
 
 **Accessibility:**
+
 - Keyboard navigation works
 - Screen reader compatible
 - WCAG 2.1 AA compliant
 
 **Security:**
+
 - HTTPS in production
 - Tokens stored securely
 - No sensitive data in logs
@@ -565,6 +599,7 @@ test: add login flow tests
 - Generic error messages
 
 **Code Quality:**
+
 - Test coverage > 80% for auth logic
 - No console errors
 - ESLint passes
@@ -573,21 +608,25 @@ test: add login flow tests
 ### Development Requirements
 
 **Architecture:**
+
 - Business logic separated from UI
 - Shared package works independently
 - Ready for mobile code sharing
 
 **Documentation:**
+
 - README with setup instructions
 - Environment variables documented
 - Component usage examples
 
 **Testing:**
+
 - Unit tests for services
 - Integration tests for flows
 - Tests pass in CI/CD
 
 **Deployment:**
+
 - Production builds successfully
 - Environment variables configurable
 - Deployable to S3 + CloudFront
@@ -606,11 +645,11 @@ Chakra UI lives in `web/`.
 The frontend is tier-agnostic: it reads exactly two env vars and a pluggable
 token provider does the rest.
 
-| Tier | Frontend | Backend | Auth | Data |
-|------|----------|---------|------|------|
-| **1 — fully local** | `npm run dev` :5173 | Flask shim `backend/local_server.py` :8000 | dev-bypass stub (`VITE_AUTH_MODE=local`) | DynamoDB Local :8001 + `seed_local.py` |
-| **2 — local FE → remote dev BE** | `npm run dev` | deployed dev API Gateway | real dev Cognito | dev DynamoDB |
-| **3 — full deploy** | S3 + CloudFront (scale-to-zero static SPA) | API Gateway (REST) + Cognito authorizer | real Cognito | prod DynamoDB |
+| Tier                             | Frontend                                   | Backend                                    | Auth                                     | Data                                   |
+| -------------------------------- | ------------------------------------------ | ------------------------------------------ | ---------------------------------------- | -------------------------------------- |
+| **1 — fully local**              | `npm run dev` :5173                        | Flask shim `backend/local_server.py` :8000 | dev-bypass stub (`VITE_AUTH_MODE=local`) | DynamoDB Local :8001 + `seed_local.py` |
+| **2 — local FE → remote dev BE** | `npm run dev`                              | deployed dev API Gateway                   | real dev Cognito                         | dev DynamoDB                           |
+| **3 — full deploy**              | S3 + CloudFront (scale-to-zero static SPA) | API Gateway (REST) + Cognito authorizer    | real Cognito                             | prod DynamoDB                          |
 
 - **`VITE_API_GATEWAY_URL`** — backend base URL.
 - **`VITE_AUTH_MODE`** — `local` (dev stub, no Cognito) or `cognito` (Amplify).
@@ -642,6 +681,7 @@ shape already proven in `backend/tests/conftest.py`.
 ### Navigation — mobile-first AppShell
 
 One responsive shell (`web/src/components/AppShell.jsx`):
+
 - **mobile (base):** fixed **bottom tab bar** (thumb-reachable).
 - **desktop (lg+):** left **sidebar**.
 - Tabs: **Search · Locations · Tags · [ + Add ]**, driven by Chakra `{ base, lg }`
@@ -649,16 +689,16 @@ One responsive shell (`web/src/components/AppShell.jsx`):
 
 ### Feature / page map
 
-| Page | Purpose | Endpoint(s) |
-|------|---------|-------------|
-| Search (home `/`) | Fuzzy name search + location/tag/expiring filters; empty = browse all | `POST /search` |
-| Locations index | List locations | `GET /locations` |
-| Location detail | A location + its items; edit/delete | `GET /locations/<id>`, `GET /items?location_id=` |
-| Location form | Create / edit | `POST` / `PUT /locations` |
-| Item detail | Full item; links to location & tags; edit/delete | `GET /items/<id>` |
-| Item form | Create / edit (with the measure control) | `POST` / `PUT /items` |
-| Tags index | All tags | `GET /tags` |
-| Tag detail | Items with a tag | `GET /items?tag=` |
+| Page              | Purpose                                                               | Endpoint(s)                                      |
+| ----------------- | --------------------------------------------------------------------- | ------------------------------------------------ |
+| Search (home `/`) | Fuzzy name search + location/tag/expiring filters; empty = browse all | `POST /search`                                   |
+| Locations index   | List locations                                                        | `GET /locations`                                 |
+| Location detail   | A location + its items; edit/delete                                   | `GET /locations/<id>`, `GET /items?location_id=` |
+| Location form     | Create / edit                                                         | `POST` / `PUT /locations`                        |
+| Item detail       | Full item; links to location & tags; edit/delete                      | `GET /items/<id>`                                |
+| Item form         | Create / edit (with the measure control)                              | `POST` / `PUT /items`                            |
+| Tags index        | All tags                                                              | `GET /tags`                                      |
+| Tag detail        | Items with a tag                                                      | `GET /items?tag=`                                |
 
 "Expiring soon" is a **date filter** on Search (`use_by_date_end`), not a page.
 
@@ -711,6 +751,7 @@ future upgrade if aggregation/live-refresh needs grow.
 **Document Status:** Draft - Awaiting Review
 
 **Next Steps:**
+
 1. Review design with stakeholders
 2. Validate technology choices
 3. Confirm security requirements

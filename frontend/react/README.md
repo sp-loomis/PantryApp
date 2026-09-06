@@ -40,7 +40,7 @@ Business logic that works across web and mobile:
 Can be imported by both web and mobile apps:
 
 ```javascript
-import { useAuth, validateEmail } from '@pantry-app/shared';
+import { useAuth, validateEmail } from "@pantry-app/shared";
 ```
 
 [View shared package documentation](./shared/README.md)
@@ -81,6 +81,7 @@ The web app will be available at `http://localhost:5173`
 ### Configuration
 
 1. Copy environment template:
+
    ```bash
    cd frontend/react/web
    cp .env.example .env
@@ -88,9 +89,9 @@ The web app will be available at `http://localhost:5173`
 
 2. Add your AWS Cognito credentials to `.env`:
    ```env
-   VITE_COGNITO_USER_POOL_ID=us-east-2_xxxxxxxxx
+   VITE_COGNITO_USER_POOL_ID=us-east-1_xxxxxxxxx
    VITE_COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
-   VITE_AWS_REGION=us-east-2
+   VITE_AWS_REGION=us-east-1
    ```
 
 ## Features
@@ -124,12 +125,14 @@ The web app will be available at `http://localhost:5173`
 ### Code Sharing Strategy
 
 **Shared (~60-70% of code):**
+
 - Authentication service (Amplify)
 - Business logic and validation
 - Custom hooks
 - Constants and configuration
 
 **Platform-Specific:**
+
 - UI components (Chakra UI vs NativeBase)
 - Navigation (React Router vs React Navigation)
 - Platform APIs
@@ -209,16 +212,16 @@ See [web/README.md](./web/README.md) for detailed deployment instructions.
 
 ## Technology Stack
 
-| Category | Technology | Version | Purpose |
-|----------|-----------|---------|---------|
-| Framework | React | 18+ | UI framework |
-| Build Tool | Vite | 5+ | Dev server and bundler |
-| UI Library | Chakra UI | 2+ | Component library |
-| Routing | React Router | 6+ | Client-side routing |
-| Backend SDK | AWS Amplify | 6+ | Cognito integration |
-| Forms | React Hook Form | 7+ | Form management |
-| State | React Context | Built-in | Global state |
-| Testing | Vitest | 1+ | Test runner |
+| Category    | Technology      | Version  | Purpose                |
+| ----------- | --------------- | -------- | ---------------------- |
+| Framework   | React           | 18+      | UI framework           |
+| Build Tool  | Vite            | 5+       | Dev server and bundler |
+| UI Library  | Chakra UI       | 2+       | Component library      |
+| Routing     | React Router    | 6+       | Client-side routing    |
+| Backend SDK | AWS Amplify     | 6+       | Cognito integration    |
+| Forms       | React Hook Form | 7+       | Form management        |
+| State       | React Context   | Built-in | Global state           |
+| Testing     | Vitest          | 1+       | Test runner            |
 
 ## Contributing
 

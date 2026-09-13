@@ -25,25 +25,24 @@ You are the **Lead Developer and Architect** for this project. Your responsibili
    - Affected code owners
    - Testing requirements
 3. **Implement**: Write clean, well-documented code following project conventions
-4. **Create PR**: You MUST automatically create a Pull Request after pushing your changes.
-   - Do not ask for confirmation; just create the PR.
-   - Provide a clear description of changes.
-   - Notify affected code owners (mentioned in comments).
-   - Link to the original issue.
+4. **Hand off**: Stop at the code. The developer owns all git operations — branching, commits, pushes, and PR creation. Do **not** create branches, commit, push, or open PRs.
+   - Summarize your changes and the files touched.
+   - Call out affected code owners so the developer can notify them.
+   - Reference the original issue in your summary.
 
 ### When Responding to PR Reviews
 
 1. **Read Feedback**: Carefully understand the reviewer's concerns or suggestions
-2. **Make Changes**: Address the feedback professionally and thoroughly
+2. **Make Changes**: Address the feedback professionally and thoroughly in the working tree
 3. **Communicate**: If you disagree with feedback, explain your reasoning respectfully
-4. **Update PR**: Push changes to the same branch
+4. **Hand off**: Leave the changes staged/unstaged in the working tree. The developer commits and pushes.
 
 ## Code Owner Notifications
 
-Before submitting a PR, you MUST:
+You do not open PRs, but you MUST still surface code ownership so the developer can notify owners:
 
 1. Check the CODEOWNERS file to identify owners of modified files
-2. Include notifications in your PR description:
+2. Include a notifications block in your change summary for the developer to paste into the PR:
 
    ```markdown
    ## Affected Code Owners
@@ -65,19 +64,17 @@ The following files are owned by @sp-loomis and require special attention:
 
 You CAN edit these files if necessary, but:
 
-- Always notify @sp-loomis in PR comments
+- Always flag the change and name @sp-loomis in your summary so the developer can notify them
 - Provide clear justification for changes
 - Be prepared to discuss alternatives
 
 ## Restrictions
 
-### Never Push to Dev
+### No Git Operations
 
-You are **STRICTLY PROHIBITED** from pushing directly to the `dev` branch under any circumstances. All changes must:
+The developer owns all git operations. You are **STRICTLY PROHIBITED** from running `git` commands that change history or remote state — no branching, staging, committing, pushing, or PR creation (including via `gh`). Your job ends at editing files in the working tree; the developer reviews, commits, and pushes.
 
-1. Be made on a feature/issue branch
-2. Go through a pull request targeting `dev`
-3. Be reviewed before merging
+Read-only git inspection (`git status`, `git diff`, `git log`) is fine.
 
 ## CLI/API Alignment Standards
 
@@ -159,29 +156,29 @@ def add_item(name: str, location: str, quantity: float):
 2. **Follow Patterns**: Match existing code style and architectural patterns
 3. **Test Thoroughly**: Include tests for new functionality
 4. **Document**: Add clear comments and update documentation
-5. **Small PRs**: Keep pull requests focused and reviewable
+5. **Small, focused changes**: Keep each change set focused and reviewable so the developer's PRs stay small
 6. **Communicate**: Over-communicate rather than under-communicate
 7. **Be Professional**: You represent the project's technical leadership
 8. **Maintain CLI/API Alignment**: Always update both CLI and API together
 
 ## Example Workflow
 
-```bash
+```text
 # 1. Understand the issue
-# (Read issue #42: "Add user authentication")
+#    (Read issue #42: "Add user authentication")
 
 # 2. Research existing code
 
-# 4. Implement solution
-# (Write code following discovered patterns)
+# 3. Implement solution
+#    (Write code following discovered patterns)
 
-# 5. Identify code owners
-# (Check CODEOWNERS for modified files)
+# 4. Identify code owners
+#    (Check CODEOWNERS for modified files)
 
-# 6. Create PR with notifications
-# - Title: "Resolve: Add user authentication"
-# - Body includes: @sp-loomis notification for any protected file changes
-# - Body includes: Other affected code owner notifications
+# 5. Hand off to the developer
+#    - Summarize changes and files touched
+#    - Provide an "Affected Code Owners" block (e.g. @sp-loomis for protected files)
+#    - Reference the issue; the developer branches, commits, pushes, and opens the PR
 ```
 
 ## Communication Style

@@ -119,6 +119,111 @@ module "item_tags_table" {
   tags         = var.env_tags
 }
 
+# DynamoDB table for tasks/chores (user-scoped)
+module "tasks_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-tasks"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "task_id"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "task_id"
+      type = "S"
+    },
+    {
+      name = "due_date"
+      type = "S"
+    }
+  ]
+
+  # DueDateIndex is sparse: only one-shot tasks with a due_date appear, mirroring
+  # the items' UseByDateIndex. Recurring tasks carry no due_date and are read via
+  # the full user-partition query, then have their status computed on the fly.
+  global_secondary_indexes = [
+    {
+      name            = "DueDateIndex"
+      hash_key        = "user_id"
+      range_key       = "due_date"
+      projection_type = "ALL"
+    }
+  ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
+# DynamoDB table for scheduled-report configs (user-scoped)
+module "reports_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-reports"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "report_id"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "report_id"
+      type = "S"
+    }
+  ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
+# DynamoDB table for the notification/message log (user-scoped)
+module "messages_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-messages"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "message_id"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "message_id"
+      type = "S"
+    },
+    {
+      name = "unread_sort"
+      type = "S"
+    }
+  ]
+
+  # UnreadIndex is sparse: only unread messages carry the unread_sort attribute
+  # (their created_at), so only they appear in the index. Marking a message read
+  # removes the attribute — and thus the row — from the index, giving the toolbar
+  # an unread count/list without scanning the whole table.
+  global_secondary_indexes = [
+    {
+      name            = "UnreadIndex"
+      hash_key        = "user_id"
+      range_key       = "unread_sort"
+      projection_type = "ALL"
+    }
+  ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
 # IAM role for Lambda function
 data "aws_iam_policy_document" "lambda_dynamodb_policy" {
   statement {
@@ -138,7 +243,12 @@ data "aws_iam_policy_document" "lambda_dynamodb_policy" {
       "${module.items_table.table_arn}/index/*",
       module.locations_table.table_arn,
       module.item_tags_table.table_arn,
-      "${module.item_tags_table.table_arn}/index/*"
+      "${module.item_tags_table.table_arn}/index/*",
+      module.tasks_table.table_arn,
+      "${module.tasks_table.table_arn}/index/*",
+      module.reports_table.table_arn,
+      module.messages_table.table_arn,
+      "${module.messages_table.table_arn}/index/*"
     ]
   }
 
@@ -196,6 +306,9 @@ module "api_lambda" {
     ITEMS_TABLE_NAME     = module.items_table.table_name
     LOCATIONS_TABLE_NAME = module.locations_table.table_name
     ITEM_TAGS_TABLE_NAME = module.item_tags_table.table_name
+    TASKS_TABLE_NAME     = module.tasks_table.table_name
+    REPORTS_TABLE_NAME   = module.reports_table.table_name
+    MESSAGES_TABLE_NAME  = module.messages_table.table_name
     COGNITO_USER_POOL_ID = module.cognito_pool.user_pool_id
     COGNITO_CLIENT_ID    = module.cognito_pool.user_pool_client_id
     ENVIRONMENT          = var.environment
@@ -205,6 +318,34 @@ module "api_lambda" {
   }
 
   tags = var.env_tags
+}
+
+# ============================================================================
+# Scheduled report sweep — EventBridge periodic trigger
+#
+# One cron rule fires the API Lambda on a fixed cadence. The handler detects the
+# EventBridge event (source "aws.events") and runs run_report_sweep(), which
+# generates every report whose next_run is due. A single rule scales to any
+# number of reports (the sweep scans for due ones), so no per-report schedules.
+# ============================================================================
+resource "aws_cloudwatch_event_rule" "report_sweep" {
+  name                = "${var.name_prefix}-rule-report-sweep"
+  description         = "Periodic trigger for the scheduled-report sweep"
+  schedule_expression = var.report_sweep_schedule
+  tags                = var.env_tags
+}
+
+resource "aws_cloudwatch_event_target" "report_sweep" {
+  rule = aws_cloudwatch_event_rule.report_sweep.name
+  arn  = module.api_lambda.function_arn
+}
+
+resource "aws_lambda_permission" "report_sweep" {
+  statement_id  = "AllowEventBridgeReportSweep"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_lambda.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.report_sweep.arn
 }
 
 # ============================================================================

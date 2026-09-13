@@ -1,6 +1,8 @@
-# Pantry App - Inventory Management System
+# Homestead Manager
 
-A serverless inventory management system for tracking items across multiple storage locations. Built with AWS Lambda, DynamoDB, and a Python CLI that maintains strict alignment with the REST API.
+A serverless homestead management system: track pantry **inventory** across storage locations *and* stay on top of **tasks and chores** — one-shot deadlines plus recurring daily/weekly/every-N-days routines that gracefully disappear when a window passes. Built with AWS Lambda, DynamoDB, a React web app, and a Python CLI that maintains strict alignment with the REST API.
+
+> Formerly "Pantry App" — the inventory features are unchanged; task tracking is the latest addition.
 
 ## Quick Start
 
@@ -505,6 +507,26 @@ top of the name match.
   }
 }
 ```
+
+### Reports & Notifications
+
+User-defined **scheduled reports** render into an **in-app message log**, with a toolbar
+notifications dropdown (unread badge) reachable anywhere in the web app. A report is an
+ordered set of section rules — a custom message, a task query ("incomplete tasks matching
+this query"), or an inventory query — fired on a simple daily/weekly/monthly schedule. A
+periodic EventBridge sweep generates due reports; `POST /reports/<id>/run` generates one
+immediately. Slack delivery is a planned add-on layered on the same engine.
+
+**API (web-only; no CLI mirror):**
+
+- Reports: `POST /reports`, `GET /reports`, `GET /reports/<id>`, `PUT /reports/<id>`,
+  `DELETE /reports/<id>`, `POST /reports/<id>/run`
+- Messages: `GET /messages`, `GET /messages/unread`, `GET /messages/<id>`,
+  `POST /messages/<id>/read`, `POST /messages/<id>/unread`, `DELETE /messages/<id>`
+
+See [`docs/notifications-reports-plan.md`](docs/notifications-reports-plan.md) for the full
+design, and [`docs/slack-integration-plan.md`](docs/slack-integration-plan.md) for the
+deferred Slack delivery.
 
 ## Architecture
 

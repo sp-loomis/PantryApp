@@ -36,6 +36,31 @@ export {
   listTags,
   searchItems
 } from './services/inventoryService.js';
+export {
+  listTasks,
+  getTask,
+  createTask,
+  updateTask,
+  deleteTask,
+  completeTask,
+  uncompleteTask
+} from './services/taskService.js';
+export {
+  listReports,
+  getReport,
+  createReport,
+  updateReport,
+  deleteReport,
+  runReport
+} from './services/reportService.js';
+export {
+  listMessages,
+  listUnread,
+  getMessage,
+  markRead,
+  markUnread,
+  deleteMessage
+} from './services/messageService.js';
 
 // Hooks
 export { useAuth } from './hooks/useAuth.js';
@@ -48,7 +73,11 @@ export {
   validatePasswordConfirmation,
   validateVerificationCode,
   validateItemName,
-  validateLocationName
+  validateLocationName,
+  validateTaskName,
+  validateRecurrence,
+  validateReportName,
+  validateSchedule
 } from './utils/validation.js';
 export {
   MEASURE_TYPES,

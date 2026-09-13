@@ -1,32 +1,4 @@
-# Local Development (Tier 1 — fully local)
-
-Run the whole app on your machine with **no AWS account**: a local HTTP server
-wraps the backend Lambda, DynamoDB Local stores data, and auth is a dev-bypass
-stub (every request is the `dev-user`). See `frontend/react/DESIGN.md` for the
-full 3-tier environment model.
-
-## Prerequisites
-
-- Python 3.10+ and the backend dev deps: `pip install -r backend/requirements-dev.txt`
-- Node 18+ and frontend deps: `npm install` (from repo root — npm workspaces)
-- A container runtime for DynamoDB Local (Docker Desktop, or `podman machine start`)
-
-## Start the stack
-
-```bash
-# 1. DynamoDB Local on :8001
-docker compose up -d
-
-# 2. Create tables + sample data (idempotent)
-python backend/seed_local.py
-
-# 3. Backend HTTP shim on :8000  (Ctrl-C to stop)
-python backend/local_server.py
-
-# 4. Frontend dev server on :5173 (separate terminal)
-npm run dev
-```
-
+>
 Open http://localhost:5173. Vite runs with `host: true`, so the printed LAN URL
 (e.g. `http://192.168.x.x:5173`) works from a phone on the same network for
 real mobile testing.
@@ -42,6 +14,41 @@ real mobile testing.
   the real service layer.
 - Frontend reads two env vars (`frontend/react/web/.env.local`):
   `VITE_API_GATEWAY_URL=http://localhost:8000` and `VITE_AUTH_MODE=local`.
+
+## Reports & notifications locally
+
+The notifications engine runs fully in this tier — `seed_local.py` creates the
+`reports` and `messages` tables and seeds sample reports (plus one generated
+message each). In the web app: **Reports** (create/edit/run) and the toolbar
+**bell** → **Messages** log all work against the local shim.
+
+Table creation is idempotent per table, so on a volume seeded before this feature
+existed, re-running `python backend/seed_local.py` just adds the two new tables
+and sample reports (existing inventory/tasks are left untouched).
+
+**The scheduled sweep has no local equivalent.** In AWS an EventBridge rule fires
+the sweep on a cadence; locally there is no EventBridge, so reports never
+auto-generate. Two ways to exercise generation locally:
+
+- **Run one report now** — the `Run` action on the Reports page, or
+  `POST /reports/<id>/run` (also the manual trigger in prod).
+- **Simulate the periodic sweep** — invoke the sweep entry point directly against
+  DynamoDB Local:
+
+  ```bash
+  cd backend
+  python -c "
+  import os, boto3
+  os.environ.setdefault('AWS_DEFAULT_REGION','us-east-1')
+  os.environ.setdefault('AWS_ACCESS_KEY_ID','local'); os.environ.setdefault('AWS_SECRET_ACCESS_KEY','local')
+  os.environ.setdefault('AWS_ENDPOINT_URL_DYNAMODB','http://localhost:8001')
+  os.environ['POWERTOOLS_TRACE_DISABLED']='1'
+  from local_schema import TABLE_NAMES
+  for k,v in TABLE_NAMES.items(): os.environ.setdefault(k,v)
+  import app
+  print(app.run_report_sweep())   # generates every report whose next_run is due
+  "
+  ```
 
 ## Config knobs (backend shim)
 

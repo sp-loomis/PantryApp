@@ -45,6 +45,22 @@ export {
   completeTask,
   uncompleteTask
 } from './services/taskService.js';
+export {
+  listReports,
+  getReport,
+  createReport,
+  updateReport,
+  deleteReport,
+  runReport
+} from './services/reportService.js';
+export {
+  listMessages,
+  listUnread,
+  getMessage,
+  markRead,
+  markUnread,
+  deleteMessage
+} from './services/messageService.js';
 
 // Hooks
 export { useAuth } from './hooks/useAuth.js';
@@ -59,7 +75,9 @@ export {
   validateItemName,
   validateLocationName,
   validateTaskName,
-  validateRecurrence
+  validateRecurrence,
+  validateReportName,
+  validateSchedule
 } from './utils/validation.js';
 export {
   MEASURE_TYPES,

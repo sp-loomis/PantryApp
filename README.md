@@ -508,6 +508,26 @@ top of the name match.
 }
 ```
 
+### Reports & Notifications
+
+User-defined **scheduled reports** render into an **in-app message log**, with a toolbar
+notifications dropdown (unread badge) reachable anywhere in the web app. A report is an
+ordered set of section rules — a custom message, a task query ("incomplete tasks matching
+this query"), or an inventory query — fired on a simple daily/weekly/monthly schedule. A
+periodic EventBridge sweep generates due reports; `POST /reports/<id>/run` generates one
+immediately. Slack delivery is a planned add-on layered on the same engine.
+
+**API (web-only; no CLI mirror):**
+
+- Reports: `POST /reports`, `GET /reports`, `GET /reports/<id>`, `PUT /reports/<id>`,
+  `DELETE /reports/<id>`, `POST /reports/<id>/run`
+- Messages: `GET /messages`, `GET /messages/unread`, `GET /messages/<id>`,
+  `POST /messages/<id>/read`, `POST /messages/<id>/unread`, `DELETE /messages/<id>`
+
+See [`docs/notifications-reports-plan.md`](docs/notifications-reports-plan.md) for the full
+design, and [`docs/slack-integration-plan.md`](docs/slack-integration-plan.md) for the
+deferred Slack delivery.
+
 ## Architecture
 
 ### Tech Stack

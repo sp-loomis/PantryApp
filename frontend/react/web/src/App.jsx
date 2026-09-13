@@ -25,6 +25,9 @@ import TagDetailPage from './pages/TagDetailPage';
 import TasksDashboardPage from './pages/TasksDashboardPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import TaskFormPage from './pages/TaskFormPage';
+import MessageLogPage from './pages/MessageLogPage';
+import ReportsPage from './pages/ReportsPage';
+import ReportFormPage from './pages/ReportFormPage';
 import theme from './theme/theme';
 
 /** Protected layout: auth gate + inventory state + the app nav shell. */
@@ -65,6 +68,10 @@ function App() {
               <Route path="/tasks/:taskId/edit" element={<TaskFormPage />} />
               <Route path="/tags" element={<TagsPage />} />
               <Route path="/tags/:tag" element={<TagDetailPage />} />
+              <Route path="/messages" element={<MessageLogPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/reports/new" element={<ReportFormPage />} />
+              <Route path="/reports/:reportId/edit" element={<ReportFormPage />} />
             </Route>
 
             {/* Unknown routes → home */}

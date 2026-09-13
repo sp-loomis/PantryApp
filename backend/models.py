@@ -180,6 +180,130 @@ class Task:
 
 
 @dataclass
+class Report:
+    """Scheduled-report config model.
+
+    A report is a user-defined rule set that the notification engine renders into
+    a :class:`Message` on a schedule. It stores *what* to report (an ordered list
+    of section rules) and *when* (a simple cron-ish schedule), never the rendered
+    output itself.
+
+    - ``schedule``: ``{ frequency: daily|weekly|monthly, time_of_day: "HH:MM",
+      weekday: 0-6 (Mon=0, weekly only), day_of_month: 1-28 (monthly only),
+      tz: IANA }``.
+    - ``sections``: ordered list of ``{ type, heading, config }`` rules. See
+      ``report_sections.py`` for the supported types.
+    - ``next_run``: ISO-8601 UTC timestamp of the next scheduled generation.
+      Computed from ``schedule`` on write and advanced after each run. Backs the
+      sweep's due-report filter.
+    - ``last_run_at``: timestamp of the most recent generation (None until run).
+    """
+    user_id: str
+    report_id: str
+    name: str
+    enabled: bool = True
+    schedule: Dict[str, Any] = field(default_factory=dict)
+    sections: List[Dict[str, Any]] = field(default_factory=list)
+    next_run: Optional[str] = None
+    last_run_at: Optional[str] = None
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    def create(
+        cls,
+        user_id: str,
+        name: str,
+        schedule: Dict[str, Any] = None,
+        sections: List[Dict[str, Any]] = None,
+        enabled: bool = True,
+        next_run: Optional[str] = None,
+    ) -> "Report":
+        """Create a new Report instance."""
+        return cls(
+            user_id=user_id,
+            report_id=str(uuid.uuid4()),
+            name=name,
+            enabled=enabled,
+            schedule=schedule or {},
+            sections=sections or [],
+            next_run=next_run,
+        )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "user_id": self.user_id,
+            "report_id": self.report_id,
+            "name": self.name,
+            "enabled": self.enabled,
+            "schedule": self.schedule,
+            "sections": self.sections,
+            "next_run": self.next_run,
+            "last_run_at": self.last_run_at,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
+class Message:
+    """A generated notification/message-log entry.
+
+    Produced by the report engine (or created directly as a system/manual
+    message). Its ``sections`` are a *rendered snapshot* of the report's rules
+    against live data at generation time — the log shows what was true when the
+    report ran, not a live re-query.
+
+    - ``report_id``: the source report (None for manual/system messages).
+    - ``sections``: ordered list of rendered ``{ type, heading, content }``.
+    - ``read_at``: ISO timestamp when the user marked it read. Backs a sparse
+      GSI (``UnreadIndex``), so it is omitted from storage while unread and the
+      attribute's absence *is* the unread state. Surfaced as None in responses.
+    """
+    user_id: str
+    message_id: str
+    title: str
+    sections: List[Dict[str, Any]] = field(default_factory=list)
+    report_id: Optional[str] = None
+    read_at: Optional[str] = None
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    def create(
+        cls,
+        user_id: str,
+        title: str,
+        sections: List[Dict[str, Any]] = None,
+        report_id: Optional[str] = None,
+    ) -> "Message":
+        """Create a new Message instance."""
+        return cls(
+            user_id=user_id,
+            message_id=str(uuid.uuid4()),
+            title=title,
+            sections=sections or [],
+            report_id=report_id,
+        )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary.
+
+        ``read_at`` is included as None for a stable response shape; the service
+        layer omits it from storage when unset (sparse-index rule).
+        """
+        return {
+            "user_id": self.user_id,
+            "message_id": self.message_id,
+            "report_id": self.report_id,
+            "title": self.title,
+            "sections": self.sections,
+            "read_at": self.read_at,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass
 class ItemTag:
     """Item-tag relationship model."""
     user_id: str

@@ -15,7 +15,10 @@ from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
 
-from services import ItemService, LocationService, TagService, TaskService
+from services import (
+    ItemService, LocationService, TagService, TaskService,
+    ReportService, MessageService, ReportGenerator,
+)
 from auth import get_effective_user_id, AuthenticationError
 
 # Initialize Powertools utilities
@@ -41,12 +44,17 @@ ITEMS_TABLE = os.environ.get('ITEMS_TABLE_NAME')
 LOCATIONS_TABLE = os.environ.get('LOCATIONS_TABLE_NAME')
 ITEM_TAGS_TABLE = os.environ.get('ITEM_TAGS_TABLE_NAME')
 TASKS_TABLE = os.environ.get('TASKS_TABLE_NAME')
+REPORTS_TABLE = os.environ.get('REPORTS_TABLE_NAME')
+MESSAGES_TABLE = os.environ.get('MESSAGES_TABLE_NAME')
 
 # Initialize services
 item_service = ItemService(dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE))
 location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
 tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
 task_service = TaskService(dynamodb.Table(TASKS_TABLE))
+report_service = ReportService(dynamodb.Table(REPORTS_TABLE))
+message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
+report_generator = ReportGenerator(report_service, message_service, task_service, item_service)
 
 
 def _current_user_id() -> str:
@@ -753,6 +761,332 @@ def delete_task(task_id: str):
 
 
 # ============================================================================
+# Report Endpoints
+#
+# Reports are user-defined scheduled-notification configs. NOTE: route order
+# matters — the specific /reports/<report_id>/run path is registered before the
+# bare /reports/<report_id> routes.
+# ============================================================================
+
+@app.post("/reports")
+@tracer.capture_method
+def create_report():
+    """Create a new scheduled report."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        if not data.get('name'):
+            return {"error": "Missing required field: name"}, 400
+        if not isinstance(data.get('schedule'), dict):
+            return {"error": "Missing or invalid required field: schedule"}, 400
+
+        report = report_service.create_report(
+            user_id=user_id,
+            name=data['name'],
+            schedule=data['schedule'],
+            sections=data.get('sections', []),
+            enabled=data.get('enabled', True),
+        )
+        metrics.add_metric(name="ReportCreated", unit="Count", value=1)
+        return {"report": report}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error creating report: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error creating report")
+        metrics.add_metric(name="ReportCreationError", unit="Count", value=1)
+        return {"error": str(e)}, 500
+
+
+@app.get("/reports")
+@tracer.capture_method
+def list_reports():
+    """List a user's reports."""
+    try:
+        user_id = _current_user_id()
+        reports = report_service.list_reports(user_id)
+        return {"reports": reports}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing reports")
+        return {"error": str(e)}, 500
+
+
+@app.post("/reports/<report_id>/run")
+@tracer.capture_method
+def run_report(report_id: str):
+    """Generate a report now (manual trigger; same path the sweep uses)."""
+    try:
+        user_id = _current_user_id()
+        report = report_service.get_report(user_id, report_id)
+        if not report:
+            return {"error": "Report not found"}, 404
+        message = report_generator.generate(report, tz=_current_tz())
+        metrics.add_metric(name="ReportRun", unit="Count", value=1)
+        return {"message": message}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error running report")
+        return {"error": str(e)}, 500
+
+
+@app.get("/reports/<report_id>")
+@tracer.capture_method
+def get_report(report_id: str):
+    """Get a specific report."""
+    try:
+        user_id = _current_user_id()
+        report = report_service.get_report(user_id, report_id)
+        if not report:
+            return {"error": "Report not found"}, 404
+        return {"report": report}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error getting report")
+        return {"error": str(e)}, 500
+
+
+@app.put("/reports/<report_id>")
+@tracer.capture_method
+def update_report(report_id: str):
+    """Update a report."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        report = report_service.update_report(user_id, report_id, data)
+        if not report:
+            return {"error": "Report not found"}, 404
+        metrics.add_metric(name="ReportUpdated", unit="Count", value=1)
+        return {"report": report}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error updating report: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error updating report")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/reports/<report_id>")
+@tracer.capture_method
+def delete_report(report_id: str):
+    """Delete a report."""
+    try:
+        user_id = _current_user_id()
+        success = report_service.delete_report(user_id, report_id)
+        if not success:
+            return {"error": "Report not found"}, 404
+        metrics.add_metric(name="ReportDeleted", unit="Count", value=1)
+        return {"message": "Report deleted successfully"}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error deleting report")
+        return {"error": str(e)}, 500
+
+
+# ============================================================================
+# Message Endpoints
+#
+# The in-app notification log. NOTE: route order matters — the specific
+# /messages/unread path is registered before the bare /messages/<message_id>
+# routes so it is not swallowed by the parametric matcher.
+# ============================================================================
+
+@app.get("/messages/unread")
+@tracer.capture_method
+def list_unread_messages():
+    """List unread messages plus the unread count (for the toolbar badge)."""
+    try:
+        user_id = _current_user_id()
+        messages = message_service.list_unread(user_id)
+        return {"messages": messages, "unread_count": len(messages)}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing unread messages")
+        return {"error": str(e)}, 500
+
+
+@app.get("/messages")
+@tracer.capture_method
+def list_messages():
+    """List a user's messages (newest first)."""
+    try:
+        user_id = _current_user_id()
+        messages = message_service.list_messages(user_id)
+        return {"messages": messages}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing messages")
+        return {"error": str(e)}, 500
+
+
+@app.post("/messages/<message_id>/read")
+@tracer.capture_method
+def mark_message_read(message_id: str):
+    """Mark a message as read."""
+    try:
+        user_id = _current_user_id()
+        message = message_service.mark_read(user_id, message_id)
+        if message is None:
+            return {"error": "Message not found"}, 404
+        return {"message": message}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error marking message read")
+        return {"error": str(e)}, 500
+
+
+@app.post("/messages/<message_id>/unread")
+@tracer.capture_method
+def mark_message_unread(message_id: str):
+    """Mark a message as unread."""
+    try:
+        user_id = _current_user_id()
+        message = message_service.mark_unread(user_id, message_id)
+        if message is None:
+            return {"error": "Message not found"}, 404
+        return {"message": message}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error marking message unread")
+        return {"error": str(e)}, 500
+
+
+@app.get("/messages/<message_id>")
+@tracer.capture_method
+def get_message(message_id: str):
+    """Get a specific message."""
+    try:
+        user_id = _current_user_id()
+        message = message_service.get_message(user_id, message_id)
+        if not message:
+            return {"error": "Message not found"}, 404
+        return {"message": message}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error getting message")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/messages/<message_id>")
+@tracer.capture_method
+def delete_message(message_id: str):
+    """Delete a message."""
+    try:
+        user_id = _current_user_id()
+        success = message_service.delete_message(user_id, message_id)
+        if not success:
+            return {"error": "Message not found"}, 404
+        metrics.add_metric(name="MessageDeleted", unit="Count", value=1)
+        return {"message": "Message deleted successfully"}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error deleting message")
+        return {"error": str(e)}, 500
+
+
+# ============================================================================
+# Scheduled report sweep (EventBridge)
+# ============================================================================
+
+def run_report_sweep(now=None) -> Dict[str, Any]:
+    """Generate every report whose next_run is due.
+
+    Invoked by the periodic EventBridge rule (not an HTTP request). Iterates all
+    due reports across users and renders each into a message, advancing each
+    report's next_run. Report timezone is taken from its own schedule, so the
+    sweep passes no per-request tz. Best-effort: a failure on one report is logged
+    and does not abort the rest.
+    """
+    due = report_service.list_due_reports(now)
+    generated = 0
+    failed = 0
+    for report in due:
+        try:
+            tz = (report.get("schedule") or {}).get("tz")
+            report_generator.generate(report, tz=tz, now=now)
+            generated += 1
+        except Exception:
+            failed += 1
+            logger.exception(
+                f"Failed to generate report {report.get('report_id')} "
+                f"for user {report.get('user_id')}"
+            )
+    logger.info(f"Report sweep complete: {generated} generated, {failed} failed")
+    metrics.add_metric(name="ReportsGenerated", unit="Count", value=generated)
+    return {"generated": generated, "failed": failed, "due": len(due)}
+
+
+def _is_scheduled_event(event: Dict[str, Any]) -> bool:
+    """True if this Lambda invocation is the EventBridge scheduled sweep."""
+    return (
+        event.get("source") == "aws.events"
+        or event.get("detail-type") == "Scheduled Event"
+    )
+
+
+# ============================================================================
 # Lambda Handler
 # ============================================================================
 
@@ -768,6 +1102,12 @@ def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, A
     - X-Ray tracing
     - CloudWatch metrics
     """
+    # EventBridge scheduled sweep: not an API Gateway request, so handle it
+    # before the REST resolver (which expects httpMethod/path).
+    if _is_scheduled_event(event):
+        logger.info("Processing scheduled report sweep")
+        return run_report_sweep()
+
     logger.info("Processing request", extra={
         "path": event.get("path"),
         "method": event.get("httpMethod")

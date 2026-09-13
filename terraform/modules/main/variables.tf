@@ -44,6 +44,12 @@ variable "env_tags" {
   default     = {}
 }
 
+variable "report_sweep_schedule" {
+  description = "EventBridge schedule expression for the scheduled-report sweep. Hourly keeps report firing within ~1h of the configured time; tighten (e.g. rate(15 minutes)) for finer granularity at higher invocation cost."
+  type        = string
+  default     = "rate(1 hour)"
+}
+
 variable "web_allowed_origin" {
   description = <<-EOT
     Origin allowed by CORS for the API (Access-Control-Allow-Origin). Defaults

@@ -56,3 +56,28 @@ def test_one_shot_due_date_roundtrips_and_clears(task_service):
 def test_invalid_recurrence_type_raises(task_service):
     with pytest.raises(ValueError):
         task_service.create_task(USER, "bad", recurrence_type="yearly", tz="UTC")
+
+
+def test_list_tasks_name_partial_match(task_service):
+    task_service.create_task(USER, "Clean the coop", tags=["animals"], tz="UTC")
+    task_service.create_task(USER, "Water garden", tags=["garden"], tz="UTC")
+
+    # Partial/fuzzy name match (same matcher as inventory search).
+    names = [t["name"] for t in task_service.list_tasks(USER, tz="UTC", status="all", name="clean")]
+    assert names == ["Clean the coop"]
+
+
+def test_list_tasks_tags_and_filter(task_service):
+    task_service.create_task(USER, "A", tags=["kitchen", "urgent"], tz="UTC")
+    task_service.create_task(USER, "B", tags=["kitchen"], tz="UTC")
+
+    # tags is an AND filter: only the task carrying BOTH tags matches.
+    both = task_service.list_tasks(USER, tz="UTC", status="all", tags=["kitchen", "urgent"])
+    assert [t["name"] for t in both] == ["A"]
+
+
+def test_list_tasks_legacy_scalar_tag_still_filters(task_service):
+    task_service.create_task(USER, "A", tags=["kitchen"], tz="UTC")
+    task_service.create_task(USER, "B", tags=["garden"], tz="UTC")
+    got = task_service.list_tasks(USER, tz="UTC", status="all", tag="garden")
+    assert [t["name"] for t in got] == ["B"]

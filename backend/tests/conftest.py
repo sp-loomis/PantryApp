@@ -26,6 +26,8 @@ ITEMS_TABLE = "test-items"
 LOCATIONS_TABLE = "test-locations"
 ITEM_TAGS_TABLE = "test-item-tags"
 TASKS_TABLE = "test-tasks"
+REPORTS_TABLE = "test-reports"
+MESSAGES_TABLE = "test-messages"
 
 # Default authenticated user for requests that don't specify one.
 USER = "user-1"
@@ -105,6 +107,33 @@ def create_tables(dynamodb) -> None:
             {"AttributeName": "due_date", "AttributeType": "S"},
         ],
         GlobalSecondaryIndexes=[_gsi("DueDateIndex", "user_id", "due_date")],
+    )
+    dynamodb.create_table(
+        TableName=REPORTS_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "report_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "report_id", "AttributeType": "S"},
+        ],
+    )
+    dynamodb.create_table(
+        TableName=MESSAGES_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "message_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "message_id", "AttributeType": "S"},
+            {"AttributeName": "unread_sort", "AttributeType": "S"},
+        ],
+        # UnreadIndex is sparse: only unread messages carry unread_sort.
+        GlobalSecondaryIndexes=[_gsi("UnreadIndex", "user_id", "unread_sort")],
     )
 
 
@@ -218,6 +247,38 @@ def task_service(dynamodb_tables):
 
 
 @pytest.fixture
+def report_service(dynamodb_tables):
+    """ReportService backed by mocked DynamoDB (service-layer tests)."""
+    from services import ReportService
+
+    yield ReportService(dynamodb_tables.Table(REPORTS_TABLE))
+
+
+@pytest.fixture
+def message_service(dynamodb_tables):
+    """MessageService backed by mocked DynamoDB (service-layer tests)."""
+    from services import MessageService
+
+    yield MessageService(dynamodb_tables.Table(MESSAGES_TABLE))
+
+
+@pytest.fixture
+def report_generator(dynamodb_tables):
+    """ReportGenerator wired to all backing services (service-layer tests)."""
+    from services import (
+        ReportService, MessageService, TaskService, ItemService, ReportGenerator,
+    )
+
+    reports = ReportService(dynamodb_tables.Table(REPORTS_TABLE))
+    messages = MessageService(dynamodb_tables.Table(MESSAGES_TABLE))
+    tasks = TaskService(dynamodb_tables.Table(TASKS_TABLE))
+    items = ItemService(
+        dynamodb_tables.Table(ITEMS_TABLE), dynamodb_tables.Table(ITEM_TAGS_TABLE)
+    )
+    yield ReportGenerator(reports, messages, tasks, items)
+
+
+@pytest.fixture
 def api(dynamodb_tables):
     """An ApiClient wrapping a freshly-reloaded ``app`` bound to the mocked tables.
 
@@ -228,6 +289,8 @@ def api(dynamodb_tables):
     os.environ["LOCATIONS_TABLE_NAME"] = LOCATIONS_TABLE
     os.environ["ITEM_TAGS_TABLE_NAME"] = ITEM_TAGS_TABLE
     os.environ["TASKS_TABLE_NAME"] = TASKS_TABLE
+    os.environ["REPORTS_TABLE_NAME"] = REPORTS_TABLE
+    os.environ["MESSAGES_TABLE_NAME"] = MESSAGES_TABLE
 
     import app
     importlib.reload(app)

@@ -20,6 +20,8 @@ from local_schema import (
     ITEM_TAGS_TABLE,
     LOCATIONS_TABLE,
     TASKS_TABLE,
+    REPORTS_TABLE,
+    MESSAGES_TABLE,
     TABLE_NAMES,
     create_tables,
 )
@@ -51,23 +53,35 @@ def main() -> None:
             raise
 
     # Import services AFTER env/tables are ready.
-    from services import ItemService, LocationService, TaskService
+    from services import (
+        ItemService, LocationService, TaskService,
+        ReportService, MessageService, ReportGenerator,
+    )
 
     location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
     item_service = ItemService(
         dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE)
     )
     task_service = TaskService(dynamodb.Table(TASKS_TABLE))
+    report_service = ReportService(dynamodb.Table(REPORTS_TABLE))
+    message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
+    report_generator = ReportGenerator(
+        report_service, message_service, task_service, item_service
+    )
 
-    # Idempotency guard: seeding creates fresh (uuid-keyed) records every run, so
-    # re-running would duplicate data. Skip if this user already has locations.
+    # Idempotency: seeding creates fresh (uuid-keyed) rows each run, so re-running
+    # would duplicate. Inventory/tasks and reports have independent guards so a
+    # volume seeded before the reports feature still gets sample reports added.
+    # To fully reset: `docker compose down -v` then re-run this script.
     if location_service.list_locations(DEV_USER_ID):
-        print(
-            f"User '{DEV_USER_ID}' already has data — skipping seed.\n"
-            "To reset: `docker compose down -v` then re-run this script."
-        )
-        return
+        print(f"User '{DEV_USER_ID}' already has inventory — skipping locations/items/tasks.")
+    else:
+        _seed_inventory(location_service, item_service, task_service)
 
+    _seed_reports(report_service, report_generator)
+
+
+def _seed_inventory(location_service, item_service, task_service) -> None:
     pantry = location_service.create_location(
         DEV_USER_ID, "Kitchen Pantry", "Dry goods and canned food"
     )
@@ -121,6 +135,53 @@ def main() -> None:
         print(f"  * {created['name']} ({created['task_id']})")
 
     print(f"Seeded {len(task_samples)} tasks for user '{DEV_USER_ID}'.")
+
+
+def _seed_reports(report_service, report_generator) -> None:
+    if report_service.list_reports(DEV_USER_ID):
+        print(f"User '{DEV_USER_ID}' already has reports — skipping reports/messages.")
+        return
+
+    # Sample reports: a daily task digest and a weekly inventory review.
+    report_samples = [
+        {
+            "name": "Daily chore digest",
+            "schedule": {"frequency": "daily", "time_of_day": "07:00", "tz": "UTC"},
+            "sections": [
+                {"type": "custom_message", "heading": "Good morning",
+                 "config": {"text": "Here's what needs doing today."}},
+                {"type": "task_query", "heading": "Active chores",
+                 "config": {"status": "active"}},
+            ],
+        },
+        {
+            "name": "Weekly pantry review",
+            "schedule": {"frequency": "weekly", "weekday": 0, "time_of_day": "18:00", "tz": "UTC"},
+            "sections": [
+                {"type": "item_query", "heading": "Dairy on hand",
+                 "config": {"tags": ["dairy"]}},
+                {"type": "custom_message", "heading": "Reminder",
+                 "config": {"text": "Check expiry dates before shopping."}},
+            ],
+        },
+    ]
+
+    reports = []
+    for spec in report_samples:
+        created = report_service.create_report(
+            DEV_USER_ID, spec["name"], spec["schedule"], sections=spec["sections"],
+        )
+        reports.append(created)
+        print(f"  ~ {created['name']} ({created['report_id']})")
+
+    print(f"Seeded {len(report_samples)} reports for user '{DEV_USER_ID}'.")
+
+    # Generate one message per report so the log/toolbar have sample content.
+    for report in reports:
+        message = report_generator.generate(report, tz="UTC")
+        print(f"  # message {message['message_id']} from '{report['name']}'")
+
+    print(f"Seeded {len(reports)} messages for user '{DEV_USER_ID}'.")
 
 
 if __name__ == "__main__":

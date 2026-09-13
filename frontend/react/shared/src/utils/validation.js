@@ -140,3 +140,37 @@ export function validateRecurrence({ recurrence_type = 'none', recurrence_interv
   }
   return null;
 }
+
+/**
+ * Validate a report name.
+ * @param {string} name
+ * @returns {string|null} Error message or null if valid
+ */
+export function validateReportName(name) {
+  if (!name || !name.trim()) {
+    return 'Report name is required';
+  }
+  return null;
+}
+
+/**
+ * Validate a report schedule (mirrors backend schedules.validate_schedule).
+ * @param {{frequency?: string, time_of_day?: string, weekday?: number, day_of_month?: number}} schedule
+ * @returns {string|null} Error message or null if valid
+ */
+export function validateSchedule({ frequency, time_of_day, weekday, day_of_month } = {}) {
+  const allowed = ['daily', 'weekly', 'monthly'];
+  if (!allowed.includes(frequency)) {
+    return 'Choose a report frequency';
+  }
+  if (time_of_day && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time_of_day)) {
+    return 'Time of day must be HH:MM (24-hour)';
+  }
+  if (frequency === 'weekly' && !(Number.isInteger(weekday) && weekday >= 0 && weekday <= 6)) {
+    return 'Choose a day of the week';
+  }
+  if (frequency === 'monthly' && !(Number.isInteger(day_of_month) && day_of_month >= 1 && day_of_month <= 28)) {
+    return 'Choose a day of the month (1-28)';
+  }
+  return null;
+}

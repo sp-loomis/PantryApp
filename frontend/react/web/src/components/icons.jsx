@@ -16,6 +16,8 @@ import {
   FiEdit2,
   FiTrash2,
   FiClock,
+  FiBell,
+  FiPlay,
 } from 'react-icons/fi';
 import {
   RiSearch2Line,
@@ -23,6 +25,7 @@ import {
   RiPriceTag3Line,
   RiAddCircleLine,
   RiCalendarTodoLine,
+  RiMegaphoneLine,
 } from 'react-icons/ri';
 
 export const SearchIcon = (props) => <Icon as={RiSearch2Line} {...props} />;
@@ -35,3 +38,6 @@ export const BackIcon = (props) => <Icon as={FiArrowLeft} {...props} />;
 export const EditIcon = (props) => <Icon as={FiEdit2} {...props} />;
 export const TrashIcon = (props) => <Icon as={FiTrash2} {...props} />;
 export const ClockIcon = (props) => <Icon as={FiClock} {...props} />;
+export const BellIcon = (props) => <Icon as={FiBell} {...props} />;
+export const RunIcon = (props) => <Icon as={FiPlay} {...props} />;
+export const ReportIcon = (props) => <Icon as={RiMegaphoneLine} {...props} />;

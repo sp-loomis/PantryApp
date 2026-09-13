@@ -10,7 +10,7 @@ from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 from aws_lambda_powertools import Logger
 
-from models import Item, Location, ItemTag, Task
+from models import Item, Location, ItemTag, Task, Report, Message
 from dimensions import (
     Dimension, DimensionType, validate_dimension, aggregate_dimensions
 )
@@ -18,6 +18,8 @@ from search import match_name, DEFAULT_MIN_SCORE
 from recurrence import (
     RECURRENCE_TYPES, compute_status, current_window_key, local_now,
 )
+from schedules import compute_next_run, validate_schedule
+from report_sections import render_section, validate_sections
 
 logger = Logger(child=True)
 
@@ -43,6 +45,34 @@ def _parse_iso(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _floats_to_decimal(obj: Any) -> Any:
+    """Recursively convert floats to Decimal for DynamoDB writes.
+
+    Rendered report sections contain arbitrary nested content (e.g. item
+    dimension values deserialized to float), and DynamoDB rejects float. This
+    walks lists/dicts and coerces every float via str() to avoid binary drift.
+    """
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, list):
+        return [_floats_to_decimal(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _floats_to_decimal(v) for k, v in obj.items()}
+    return obj
+
+
+def _decimals_to_float(obj: Any) -> Any:
+    """Recursively convert Decimals back to float/int for JSON responses."""
+    if isinstance(obj, Decimal):
+        # Preserve whole numbers as int, everything else as float.
+        return int(obj) if obj == obj.to_integral_value() else float(obj)
+    if isinstance(obj, list):
+        return [_decimals_to_float(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _decimals_to_float(v) for k, v in obj.items()}
+    return obj
 
 
 def _serialize_dimensions(dimensions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -749,13 +779,17 @@ class TaskService:
         tz: Optional[str] = None,
         status: Optional[str] = None,
         tag: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List a user's tasks with computed status.
 
         ``status`` filters the computed status: ``active`` (the default view of
         what needs doing now), ``done`` (completed for the current window), or
-        None/``all`` for everything. ``tag`` narrows by a denormalized tag. All
-        tasks are evaluated against a single ``now`` for a consistent snapshot.
+        None/``all`` for everything. ``tag`` (scalar, legacy) and ``tags`` (list,
+        AND) narrow by denormalized tags. ``name`` is a partial, fuzzy match on the
+        task name via the same matcher as inventory search. All tasks are evaluated
+        against a single ``now`` for a consistent snapshot.
         """
         response = self.tasks_table.query(
             KeyConditionExpression=Key("user_id").eq(user_id)
@@ -763,9 +797,15 @@ class TaskService:
         now = local_now(tz)
         tasks = [self._with_status(t, tz, now) for t in response.get("Items", [])]
 
+        # Combine the legacy scalar tag with the tags list; all must match (AND).
+        wanted_tags = {t.lower() for t in (tags or [])}
         if tag:
-            wanted = tag.lower()
-            tasks = [t for t in tasks if wanted in t.get("tags", [])]
+            wanted_tags.add(tag.lower())
+        if wanted_tags:
+            tasks = [t for t in tasks if wanted_tags.issubset(set(t.get("tags", [])))]
+
+        if name:
+            tasks = [t for t in tasks if match_name(t.get("name", ""), name) is not None]
 
         if status == "active":
             tasks = [t for t in tasks if t["active"]]
@@ -933,3 +973,345 @@ class TaskService:
                     datetime.fromisoformat(value)
                 except (TypeError, ValueError):
                     raise ValueError(f"Invalid {label}: must be an ISO-8601 date")
+
+
+class ReportService:
+    """Service for managing scheduled-report configs.
+
+    A report stores *what* to report (ordered section rules) and *when* (a simple
+    cron-ish schedule). ``next_run`` is computed from the schedule on write and
+    advanced after each generation; it backs the periodic sweep's due filter.
+    """
+
+    def __init__(self, reports_table):
+        self.reports_table = reports_table
+
+    @staticmethod
+    def _deserialize_report(report: Dict[str, Any]) -> Dict[str, Any]:
+        """Guarantee a stable report shape for API responses.
+
+        DynamoDB returns all numbers as Decimal, so schedule fields like
+        ``weekday`` / ``day_of_month`` come back as Decimal and would fail the
+        ``int`` checks in schedule validation (and JSON serialization). Convert
+        them back to plain int/float on read.
+        """
+        report.setdefault("enabled", True)
+        report.setdefault("schedule", {})
+        report.setdefault("sections", [])
+        report.setdefault("next_run", None)
+        report.setdefault("last_run_at", None)
+        report["schedule"] = _decimals_to_float(report["schedule"])
+        report["sections"] = _decimals_to_float(report["sections"])
+        return report
+
+    def create_report(
+        self,
+        user_id: str,
+        name: str,
+        schedule: Dict[str, Any],
+        sections: List[Dict[str, Any]] = None,
+        enabled: bool = True,
+        now: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Create a report, validating its schedule and section rules."""
+        sections = sections or []
+        validate_schedule(schedule)
+        validate_sections(sections)
+
+        next_run = compute_next_run(schedule, now)
+        report = Report.create(
+            user_id=user_id,
+            name=name,
+            schedule=schedule,
+            sections=sections,
+            enabled=enabled,
+            next_run=next_run,
+        )
+        self.reports_table.put_item(Item=report.to_dict())
+        logger.info(f"Created report: {report.report_id} for user: {user_id}")
+        return self._deserialize_report(report.to_dict())
+
+    def get_report(self, user_id: str, report_id: str) -> Optional[Dict[str, Any]]:
+        """Get a report by ID for a specific user."""
+        response = self.reports_table.get_item(Key={"user_id": user_id, "report_id": report_id})
+        report = response.get("Item")
+        if not report:
+            return None
+        return self._deserialize_report(report)
+
+    def list_reports(self, user_id: str) -> List[Dict[str, Any]]:
+        """List all of a user's reports."""
+        response = self.reports_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id)
+        )
+        return [self._deserialize_report(r) for r in response.get("Items", [])]
+
+    def update_report(
+        self, user_id: str, report_id: str, updates: Dict[str, Any], now: Optional[Any] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Partially update a report. Recomputes next_run if the schedule changes."""
+        response = self.reports_table.get_item(Key={"user_id": user_id, "report_id": report_id})
+        existing = response.get("Item")
+        if not existing:
+            return None
+
+        if "schedule" in updates:
+            validate_schedule(updates["schedule"])
+        if "sections" in updates:
+            validate_sections(updates["sections"])
+
+        set_parts = ["updated_at = :updated_at"]
+        expr_values = {":updated_at": _now_iso()}
+        expr_names = {}
+
+        if "name" in updates:
+            set_parts.append("#n = :name")
+            expr_values[":name"] = updates["name"]
+            expr_names["#n"] = "name"
+
+        for field_name in ("enabled", "sections"):
+            if field_name in updates:
+                set_parts.append(f"{field_name} = :{field_name}")
+                expr_values[f":{field_name}"] = updates[field_name]
+
+        if "schedule" in updates:
+            set_parts.append("schedule = :schedule")
+            expr_values[":schedule"] = updates["schedule"]
+            # A changed schedule invalidates the old firing time.
+            set_parts.append("next_run = :next_run")
+            expr_values[":next_run"] = compute_next_run(updates["schedule"], now)
+
+        update_kwargs = {
+            "Key": {"user_id": user_id, "report_id": report_id},
+            "UpdateExpression": "SET " + ", ".join(set_parts),
+            "ExpressionAttributeValues": expr_values,
+            "ReturnValues": "ALL_NEW",
+        }
+        if expr_names:
+            update_kwargs["ExpressionAttributeNames"] = expr_names
+
+        response = self.reports_table.update_item(**update_kwargs)
+        attributes = response.get("Attributes")
+        if not attributes:
+            return None
+        logger.info(f"Updated report: {report_id} for user: {user_id}")
+        return self._deserialize_report(attributes)
+
+    def delete_report(self, user_id: str, report_id: str) -> bool:
+        """Delete a report; returns False when it does not exist (for a 404)."""
+        response = self.reports_table.get_item(Key={"user_id": user_id, "report_id": report_id})
+        if not response.get("Item"):
+            return False
+        self.reports_table.delete_item(Key={"user_id": user_id, "report_id": report_id})
+        logger.info(f"Deleted report: {report_id} for user: {user_id}")
+        return True
+
+    def list_due_reports(self, now: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """Return all enabled reports across users whose next_run is at or before now.
+
+        The sweep runs cross-user, so this Scans the table (volume is low and the
+        table is PAY_PER_REQUEST). If report counts grow, back this with a GSI on
+        a constant partition keyed by next_run instead.
+        """
+        now_iso = (now.astimezone(timezone.utc).isoformat() if now is not None else _now_iso())
+        response = self.reports_table.scan(
+            FilterExpression=Attr("enabled").eq(True) & Attr("next_run").lte(now_iso)
+        )
+        items = [self._deserialize_report(r) for r in response.get("Items", [])]
+        while "LastEvaluatedKey" in response:
+            response = self.reports_table.scan(
+                FilterExpression=Attr("enabled").eq(True) & Attr("next_run").lte(now_iso),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(self._deserialize_report(r) for r in response.get("Items", []))
+        return items
+
+    def mark_run(
+        self, user_id: str, report_id: str, schedule: Dict[str, Any], now: Optional[Any] = None
+    ) -> None:
+        """Record a generation: advance next_run and stamp last_run_at."""
+        self.reports_table.update_item(
+            Key={"user_id": user_id, "report_id": report_id},
+            UpdateExpression="SET next_run = :next_run, last_run_at = :last_run_at, updated_at = :updated_at",
+            ExpressionAttributeValues={
+                ":next_run": compute_next_run(schedule, now),
+                ":last_run_at": _now_iso(),
+                ":updated_at": _now_iso(),
+            },
+        )
+
+
+class MessageService:
+    """Service for the notification/message log.
+
+    Messages are generated by the report engine (or created directly). Unread
+    state is modeled with a sparse GSI: an unread message carries an
+    ``unread_sort`` attribute (its ``created_at``, so the index sorts newest-first)
+    and appears in the ``UnreadIndex``; marking read REMOVES that attribute
+    (dropping the row from the index) and stamps ``read_at``. This powers the
+    toolbar badge without scanning all rows. ``unread_sort`` is storage-only and
+    stripped from API responses.
+    """
+
+    UNREAD_INDEX = "UnreadIndex"
+    UNREAD_SORT_ATTR = "unread_sort"
+
+    def __init__(self, messages_table):
+        self.messages_table = messages_table
+
+    @classmethod
+    def _deserialize_message(cls, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Guarantee a stable message shape for API responses."""
+        message.pop(cls.UNREAD_SORT_ATTR, None)  # storage-only index key
+        message.setdefault("report_id", None)
+        message.setdefault("sections", [])
+        message.setdefault("read_at", None)
+        # Section content may hold Decimals (from stored item/task snapshots);
+        # convert back to float/int so the response is JSON-serializable.
+        message["sections"] = _decimals_to_float(message["sections"])
+        return message
+
+    def create_message(
+        self,
+        user_id: str,
+        title: str,
+        sections: List[Dict[str, Any]] = None,
+        report_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a message (unread: carries unread_sort, omits read_at)."""
+        message = Message.create(
+            user_id=user_id,
+            title=title,
+            sections=sections or [],
+            report_id=report_id,
+        )
+        storage_dict = message.to_dict()
+        # read_at is absent while unread; unread_sort (=created_at) places the row
+        # in the sparse UnreadIndex, sorted newest-first.
+        storage_dict.pop("read_at", None)
+        storage_dict[self.UNREAD_SORT_ATTR] = message.created_at
+        # Section snapshots may carry floats (e.g. item dimensions); DynamoDB
+        # needs Decimal.
+        storage_dict["sections"] = _floats_to_decimal(storage_dict["sections"])
+        self.messages_table.put_item(Item=storage_dict)
+        logger.info(f"Created message: {message.message_id} for user: {user_id}")
+        return self._deserialize_message(message.to_dict())
+
+    def get_message(self, user_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        """Get a message by ID for a specific user."""
+        response = self.messages_table.get_item(Key={"user_id": user_id, "message_id": message_id})
+        message = response.get("Item")
+        if not message:
+            return None
+        return self._deserialize_message(message)
+
+    def list_messages(self, user_id: str) -> List[Dict[str, Any]]:
+        """List a user's messages, newest first."""
+        response = self.messages_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id)
+        )
+        messages = [self._deserialize_message(m) for m in response.get("Items", [])]
+        messages.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        return messages
+
+    def list_unread(self, user_id: str) -> List[Dict[str, Any]]:
+        """List a user's unread messages via the sparse UnreadIndex, newest first."""
+        response = self.messages_table.query(
+            IndexName=self.UNREAD_INDEX,
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
+        messages = [self._deserialize_message(m) for m in response.get("Items", [])]
+        messages.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        return messages
+
+    def unread_count(self, user_id: str) -> int:
+        """Count a user's unread messages (queries the sparse index)."""
+        response = self.messages_table.query(
+            IndexName=self.UNREAD_INDEX,
+            KeyConditionExpression=Key("user_id").eq(user_id),
+            Select="COUNT",
+        )
+        return response.get("Count", 0)
+
+    def mark_read(self, user_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        """Mark a message read (writes read_at, dropping it from the unread index)."""
+        response = self.messages_table.get_item(Key={"user_id": user_id, "message_id": message_id})
+        if not response.get("Item"):
+            return None
+        response = self.messages_table.update_item(
+            Key={"user_id": user_id, "message_id": message_id},
+            UpdateExpression=f"SET read_at = :read_at REMOVE {self.UNREAD_SORT_ATTR}",
+            ExpressionAttributeValues={":read_at": _now_iso()},
+            ReturnValues="ALL_NEW",
+        )
+        logger.info(f"Marked message read: {message_id} for user: {user_id}")
+        return self._deserialize_message(response["Attributes"])
+
+    def mark_unread(self, user_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        """Mark a message unread (restores unread_sort, REMOVEs read_at)."""
+        response = self.messages_table.get_item(Key={"user_id": user_id, "message_id": message_id})
+        existing = response.get("Item")
+        if not existing:
+            return None
+        response = self.messages_table.update_item(
+            Key={"user_id": user_id, "message_id": message_id},
+            UpdateExpression=f"SET {self.UNREAD_SORT_ATTR} = :unread_sort REMOVE read_at",
+            ExpressionAttributeValues={":unread_sort": existing.get("created_at", _now_iso())},
+            ReturnValues="ALL_NEW",
+        )
+        logger.info(f"Marked message unread: {message_id} for user: {user_id}")
+        return self._deserialize_message(response["Attributes"])
+
+    def delete_message(self, user_id: str, message_id: str) -> bool:
+        """Delete a message; returns False when it does not exist (for a 404)."""
+        response = self.messages_table.get_item(Key={"user_id": user_id, "message_id": message_id})
+        if not response.get("Item"):
+            return False
+        self.messages_table.delete_item(Key={"user_id": user_id, "message_id": message_id})
+        logger.info(f"Deleted message: {message_id} for user: {user_id}")
+        return True
+
+
+class ReportGenerator:
+    """Renders a report config into a message (the in-app delivery sink).
+
+    This is the seam the Slack integration will extend: today ``generate`` writes
+    the rendered message to the message log; a Slack sink will later consume the
+    same rendered :class:`Message` (see ``docs/slack-integration-plan.md``'s
+    ``post_message`` boundary). Section rules are resolved against live data at
+    generation time via the injected services, then snapshotted into the message.
+    """
+
+    def __init__(self, report_service, message_service, task_service, item_service):
+        self.report_service = report_service
+        self.message_service = message_service
+        # Exposed as attributes so section renderers can reach the service layer.
+        self.task_service = task_service
+        self.item_service = item_service
+
+    def generate(
+        self, report: Dict[str, Any], tz: Optional[str] = None, now: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """Render one report into a message and persist it.
+
+        Advances the report's next_run / last_run_at. Returns the created message.
+        """
+        user_id = report["user_id"]
+        rendered_sections = [
+            render_section(section, user_id, self, tz)
+            for section in report.get("sections", [])
+        ]
+        message = self.message_service.create_message(
+            user_id=user_id,
+            title=report.get("name", "Report"),
+            sections=rendered_sections,
+            report_id=report.get("report_id"),
+        )
+        self.report_service.mark_run(
+            user_id, report["report_id"], report.get("schedule", {}), now
+        )
+        logger.info(
+            f"Generated report {report['report_id']} -> message "
+            f"{message['message_id']} for user {user_id}"
+        )
+        return message

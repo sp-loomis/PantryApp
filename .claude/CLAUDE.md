@@ -81,11 +81,19 @@ You are **STRICTLY PROHIBITED** from pushing directly to the `dev` branch under 
 
 ## CLI/API Alignment Standards
 
-The project maintains a **strict one-to-one correspondence** between the CLI frontend and the API backend:
+> **Status (relaxed):** The `frontend/cli` tool was an early-development harness for
+> exercising the API before the React SPA existed. The web SPA is now the primary
+> client, so the **CLI mirror is optional, not required**. New API endpoints do
+> **not** need a matching CLI command. When you *do* touch the CLI, keep the
+> conventions below (JSON output, argument alignment) so existing commands stay
+> consistent. If you add an endpoint without a CLI mirror, note it in the PR.
+
+The guidance below describes the original one-to-one correspondence, kept as the
+convention for any CLI work that is done:
 
 ### Requirements
 
-1. **One-to-One Mapping**: Every API endpoint must have exactly one corresponding CLI command
+1. **One-to-One Mapping**: Where a CLI command exists, it should map to exactly one API endpoint
    - API endpoint: `POST /locations` → CLI command: `location create`
    - API endpoint: `GET /items/<item_id>` → CLI command: `item get <item_id>`
 
@@ -106,13 +114,14 @@ The project maintains a **strict one-to-one correspondence** between the CLI fro
 
 ### When Adding New Features
 
-When adding or modifying API endpoints, you **MUST** also update the corresponding CLI command:
+When adding or modifying API endpoints, keep the primary clients in sync:
 
 1. Add/modify the API endpoint in `backend/app.py`
-2. Add/modify the corresponding CLI command in `frontend/cli/pantry_cli.py`
-3. Ensure the CLI command outputs JSON matching the API response
-4. Update any tests to verify both API and CLI behavior
-5. Document the new endpoint/command if needed
+2. Add/modify the corresponding React service in `frontend/react/shared/src/services/`
+3. Update any tests to verify the API behavior (unit + e2e)
+4. Document the new endpoint if needed
+5. *(Optional)* mirror the endpoint as a CLI command in `frontend/cli/pantry_cli.py`
+   if the CLI is being maintained for that resource
 
 ### Example
 

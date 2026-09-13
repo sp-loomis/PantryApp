@@ -11,12 +11,21 @@
 
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Box, Flex, HStack, VStack, Text, Heading } from '@chakra-ui/react';
-import { SearchIcon, LocationIcon, TaskIcon, TagIcon, PlusIcon } from './icons';
+import {
+  SearchIcon,
+  LocationIcon,
+  TaskIcon,
+  TagIcon,
+  PlusIcon,
+  ReportIcon,
+} from './icons';
+import NotificationsMenu from './NotificationsMenu';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Search', icon: SearchIcon, end: true },
   { to: '/locations', label: 'Locations', icon: LocationIcon },
   { to: '/tasks', label: 'Tasks', icon: TaskIcon },
+  { to: '/reports', label: 'Reports', icon: ReportIcon },
   { to: '/tags', label: 'Tags', icon: TagIcon },
   { to: '/items/new', label: 'Add', icon: PlusIcon, accent: true },
 ];
@@ -126,6 +135,10 @@ export default function AppShell() {
         w="full"
         mx="auto"
       >
+        {/* Top toolbar: notifications bell, reachable from anywhere in the app. */}
+        <Flex justify="flex-end" align="center" mb={{ base: 2, md: 4 }}>
+          <NotificationsMenu />
+        </Flex>
         <Outlet />
       </Box>
 

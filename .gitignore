@@ -9,8 +9,9 @@
 
 # Node.js
 **/node_modules
-**/package-lock.json
 **/npm-debug.log*
+# NOTE: package-lock.json is intentionally committed — `npm ci` (used in CI)
+# requires a lockfile for reproducible installs.
 
 # Environment files
 **/.env

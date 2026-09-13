@@ -11,7 +11,7 @@ Schedule shape::
 
     {
         "frequency": "daily" | "weekly" | "monthly",
-        "time_of_day": "HH:MM",      # 24h local time, default "09:00"
+        "time_of_day": "HH:00",      # 24h local time, on the hour; default "09:00"
         "weekday": 0-6,              # Mon=0 .. Sun=6; weekly only
         "day_of_month": 1-28,        # monthly only (capped at 28 for safety)
         "tz": "America/New_York",    # IANA; defaults to UTC
@@ -31,7 +31,12 @@ DEFAULT_TIME_OF_DAY = "09:00"
 
 
 def _parse_time_of_day(value: Any) -> tuple[int, int]:
-    """Parse ``"HH:MM"`` into (hour, minute), raising ValueError if malformed."""
+    """Parse ``"HH:MM"`` into (hour, minute), raising ValueError if malformed.
+
+    Reports fire only on the hour (the notification sweep runs hourly), so the
+    minute component must be ``00``. A non-zero minute is rejected rather than
+    silently floored, keeping the stored schedule honest about when it fires.
+    """
     if value is None:
         value = DEFAULT_TIME_OF_DAY
     if not isinstance(value, str):
@@ -43,6 +48,8 @@ def _parse_time_of_day(value: Any) -> tuple[int, int]:
         raise ValueError("time_of_day must be a 'HH:MM' string")
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         raise ValueError("time_of_day must be within 00:00..23:59")
+    if minute != 0:
+        raise ValueError("time_of_day must be on the hour (minutes must be 00)")
     return hour, minute
 
 

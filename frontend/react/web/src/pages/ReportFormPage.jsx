@@ -51,6 +51,10 @@ const WEEKDAYS = [
   { value: 6, label: 'Sunday' },
 ];
 
+// Reports fire on the hour (the notification sweep runs hourly), so the time
+// picker offers whole-hour options only: "00:00" .. "23:00".
+const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}:00`);
+
 const SECTION_TYPES = [
   { value: 'custom_message', label: 'Custom message' },
   { value: 'task_query', label: 'Task query' },
@@ -191,7 +195,9 @@ export default function ReportFormPage() {
       setName(report.name);
       setEnabled(report.enabled ?? true);
       setFrequency(s.frequency || 'daily');
-      setTimeOfDay(s.time_of_day || '09:00');
+      // Legacy schedules may carry a non-zero minute; floor to the hour so the
+      // whole-hour picker has a matching option.
+      setTimeOfDay(`${(s.time_of_day || '09:00').slice(0, 2)}:00`);
       setWeekday(s.weekday ?? 0);
       setDayOfMonth(s.day_of_month ?? 1);
       setSections(
@@ -324,11 +330,13 @@ export default function ReportFormPage() {
               </FormControl>
               <FormControl>
                 <FormLabel fontSize="sm">Time</FormLabel>
-                <Input
-                  type="time"
-                  value={timeOfDay}
-                  onChange={(e) => setTimeOfDay(e.target.value)}
-                />
+                <Select value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)}>
+                  {HOURS.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </Select>
               </FormControl>
               {frequency === 'weekly' && (
                 <FormControl>

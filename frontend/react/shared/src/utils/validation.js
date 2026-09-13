@@ -163,8 +163,10 @@ export function validateSchedule({ frequency, time_of_day, weekday, day_of_month
   if (!allowed.includes(frequency)) {
     return 'Choose a report frequency';
   }
-  if (time_of_day && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time_of_day)) {
-    return 'Time of day must be HH:MM (24-hour)';
+  // Reports fire on the hour (the notification sweep runs hourly), so minutes
+  // must be 00. Mirrors backend schedules._parse_time_of_day.
+  if (time_of_day && !/^([01]\d|2[0-3]):00$/.test(time_of_day)) {
+    return 'Time of day must be on the hour (HH:00, 24-hour)';
   }
   if (frequency === 'weekly' && !(Number.isInteger(weekday) && weekday >= 0 && weekday <= 6)) {
     return 'Choose a day of the week';

@@ -45,9 +45,9 @@ variable "env_tags" {
 }
 
 variable "report_sweep_schedule" {
-  description = "EventBridge schedule expression for the scheduled-report sweep. Hourly keeps report firing within ~1h of the configured time; tighten (e.g. rate(15 minutes)) for finer granularity at higher invocation cost."
+  description = "EventBridge schedule expression for the scheduled-report sweep. Fires at the top of every hour (cron minute 0) so firing aligns with the on-the-hour granularity of report schedules; reports fire within the hour they are configured for."
   type        = string
-  default     = "rate(1 hour)"
+  default     = "cron(0 * * * ? *)"
 }
 
 variable "web_allowed_origin" {

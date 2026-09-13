@@ -66,6 +66,7 @@ def test_monthly_year_rollover():
     {"frequency": "hourly"},
     {"frequency": "daily", "time_of_day": "9am"},
     {"frequency": "daily", "time_of_day": "25:00"},
+    {"frequency": "daily", "time_of_day": "09:30"},  # non-zero minutes rejected
     {"frequency": "weekly", "weekday": 9},
     {"frequency": "monthly", "day_of_month": 31},
 ])

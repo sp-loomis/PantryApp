@@ -188,7 +188,8 @@ class Report:
     of section rules) and *when* (a simple cron-ish schedule), never the rendered
     output itself.
 
-    - ``schedule``: ``{ frequency: daily|weekly|monthly, time_of_day: "HH:MM",
+    - ``schedule``: ``{ frequency: daily|weekly|monthly, time_of_day: "HH:00"
+      (on the hour; sweep runs hourly),
       weekday: 0-6 (Mon=0, weekly only), day_of_month: 1-28 (monthly only),
       tz: IANA }``.
     - ``sections``: ordered list of ``{ type, heading, config }`` rules. See

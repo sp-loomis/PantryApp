@@ -515,7 +515,7 @@ notifications dropdown (unread badge) reachable anywhere in the web app. A repor
 ordered set of section rules — a custom message, a task query ("incomplete tasks matching
 this query"), or an inventory query — fired on a simple daily/weekly/monthly schedule. A
 periodic EventBridge sweep generates due reports; `POST /reports/<id>/run` generates one
-immediately. Slack delivery is a planned add-on layered on the same engine.
+immediately. Slack delivery is layered on the same engine (see below).
 
 **API (web-only; no CLI mirror):**
 
@@ -525,8 +525,35 @@ immediately. Slack delivery is a planned add-on layered on the same engine.
   `POST /messages/<id>/read`, `POST /messages/<id>/unread`, `DELETE /messages/<id>`
 
 See [`docs/notifications-reports-plan.md`](docs/notifications-reports-plan.md) for the full
-design, and [`docs/slack-integration-plan.md`](docs/slack-integration-plan.md) for the
-deferred Slack delivery.
+design.
+
+### Slack Integration
+
+**Bring-your-own-Slack**, multi-tenant: each user connects **their own** Slack
+workspace via OAuth v2; the app stores a per-workspace bot token (encrypted with a
+customer-managed KMS key) and posts to channels the user selects. One user's
+connection can never post into another's workspace. Manage it in the web app under
+**Settings → Integrations** ("Connect Slack", channel picker, send-test, disconnect).
+`SlackService.post_message(...)` is the primitive the report engine delivers through.
+
+**API:**
+
+- OAuth (browser-redirect, no CLI mirror): `GET /slack/oauth/start` (Cognito-guarded,
+  returns the authorize URL), `GET /slack/oauth/callback` (Slack redirect; bypasses
+  Cognito, trust from a signed `state`)
+- Connections: `GET /slack/connections`, `GET /slack/connections/<id>/channels`,
+  `DELETE /slack/connections/<id>`, `POST /slack/connections/<id>/test`
+- CLI: `slack connections list`, `slack channels list <id>`, `slack disconnect <id>`,
+  `slack test <id> --channel <channel_id>`
+
+**No endpoint ever returns the bot token.** The token is stored only as KMS ciphertext.
+The Slack `client_secret` and the OAuth `state` HMAC secret live in a single Secrets
+Manager secret (`<name_prefix>-slack-app`) whose value is **populated out-of-band** after
+deploy — Terraform creates the secret but not its contents. Register the environment's
+redirect URI on the Slack app before OAuth will work.
+
+See [`docs/slack-integration-plan.md`](docs/slack-integration-plan.md) for the full design,
+and [`LOCAL_DEV.md`](LOCAL_DEV.md) for the local dev-stub (no real Slack needed).
 
 ## Architecture
 

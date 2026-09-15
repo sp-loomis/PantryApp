@@ -305,6 +305,101 @@ class Message:
 
 
 @dataclass
+class SlackConnection:
+    """A user's connected Slack workspace (bring-your-own-Slack, OAuth v2).
+
+    One row per installed workspace, scoped by ``user_id`` (Cognito sub) so one
+    customer's connection can never post into another's Slack. The bot token is
+    stored ONLY as ciphertext (``bot_token_cipher`` — KMS-encrypted, base64) and
+    is never returned by the API: response shapes come from ``to_public_dict``,
+    which omits it. See ``SlackService`` for the encrypt/decrypt seam.
+
+    - ``connection_id``: uuid range key (allows >1 workspace per user later).
+    - ``scopes``: space/comma-delimited bot scopes granted at install.
+    - ``authed_user_id``: the Slack user who performed the install.
+    """
+    user_id: str
+    connection_id: str
+    team_id: str
+    team_name: str
+    bot_token_cipher: str
+    bot_user_id: str = ""
+    scopes: str = ""
+    authed_user_id: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    def create(
+        cls,
+        user_id: str,
+        team_id: str,
+        team_name: str,
+        bot_token_cipher: str,
+        bot_user_id: str = "",
+        scopes: str = "",
+        authed_user_id: str = "",
+    ) -> "SlackConnection":
+        """Create a new SlackConnection instance."""
+        return cls(
+            user_id=user_id,
+            connection_id=str(uuid.uuid4()),
+            team_id=team_id,
+            team_name=team_name,
+            bot_token_cipher=bot_token_cipher,
+            bot_user_id=bot_user_id,
+            scopes=scopes,
+            authed_user_id=authed_user_id,
+        )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage (includes the token ciphertext)."""
+        return {
+            "user_id": self.user_id,
+            "connection_id": self.connection_id,
+            "team_id": self.team_id,
+            "team_name": self.team_name,
+            "bot_token_cipher": self.bot_token_cipher,
+            "bot_user_id": self.bot_user_id,
+            "scopes": self.scopes,
+            "authed_user_id": self.authed_user_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def to_public_dict(self) -> dict:
+        """Convert to the API-safe shape — NEVER includes ``bot_token_cipher``."""
+        return {
+            "connection_id": self.connection_id,
+            "team_id": self.team_id,
+            "team_name": self.team_name,
+            "bot_user_id": self.bot_user_id,
+            "scopes": self.scopes,
+            "authed_user_id": self.authed_user_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @staticmethod
+    def public_from_item(item: Dict[str, Any]) -> dict:
+        """Strip a stored DynamoDB item down to the API-safe shape.
+
+        Guards against the token ever leaking: whatever else the row holds, only
+        the whitelisted public keys are returned.
+        """
+        return {
+            "connection_id": item.get("connection_id"),
+            "team_id": item.get("team_id"),
+            "team_name": item.get("team_name"),
+            "bot_user_id": item.get("bot_user_id", ""),
+            "scopes": item.get("scopes", ""),
+            "authed_user_id": item.get("authed_user_id", ""),
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
+        }
+
+
+@dataclass
 class ItemTag:
     """Item-tag relationship model."""
     user_id: str

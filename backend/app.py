@@ -13,11 +13,11 @@ import boto3
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig, Response
 
 from services import (
     ItemService, LocationService, TagService, TaskService,
-    ReportService, MessageService, ReportGenerator,
+    ReportService, MessageService, ReportGenerator, SlackService,
 )
 from auth import get_effective_user_id, AuthenticationError
 
@@ -46,6 +46,17 @@ ITEM_TAGS_TABLE = os.environ.get('ITEM_TAGS_TABLE_NAME')
 TASKS_TABLE = os.environ.get('TASKS_TABLE_NAME')
 REPORTS_TABLE = os.environ.get('REPORTS_TABLE_NAME')
 MESSAGES_TABLE = os.environ.get('MESSAGES_TABLE_NAME')
+SLACK_CONNECTIONS_TABLE = os.environ.get('SLACK_CONNECTIONS_TABLE_NAME')
+SLACK_NONCES_TABLE = os.environ.get('SLACK_NONCES_TABLE_NAME')
+
+# Slack integration config (see docs/slack-integration-plan.md).
+SLACK_CLIENT_ID = os.environ.get('SLACK_CLIENT_ID', '')
+SLACK_REDIRECT_URI = os.environ.get('SLACK_REDIRECT_URI', '')
+SLACK_KMS_KEY_ID = os.environ.get('SLACK_KMS_KEY_ID')
+SLACK_SECRET_ARN = os.environ.get('SLACK_SECRET_ARN')
+# The Flask dev shim sets ENVIRONMENT=local; that flips SlackService into a
+# no-network mode (passthrough token "encryption", stubbed secret + Slack calls).
+SLACK_LOCAL_MODE = os.environ.get('ENVIRONMENT') == 'local'
 
 # Initialize services
 item_service = ItemService(dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE))
@@ -55,6 +66,20 @@ task_service = TaskService(dynamodb.Table(TASKS_TABLE))
 report_service = ReportService(dynamodb.Table(REPORTS_TABLE))
 message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
 report_generator = ReportGenerator(report_service, message_service, task_service, item_service)
+
+# KMS/Secrets clients are lazy (boto3 resolves creds on first call), so building
+# them at import time is cheap even when the Slack feature is unconfigured.
+slack_service = SlackService(
+    dynamodb.Table(SLACK_CONNECTIONS_TABLE) if SLACK_CONNECTIONS_TABLE else None,
+    boto3.client('kms'),
+    boto3.client('secretsmanager'),
+    client_id=SLACK_CLIENT_ID,
+    redirect_uri=SLACK_REDIRECT_URI,
+    kms_key_id=SLACK_KMS_KEY_ID,
+    secret_arn=SLACK_SECRET_ARN,
+    nonces_table=dynamodb.Table(SLACK_NONCES_TABLE) if SLACK_NONCES_TABLE else None,
+    local_mode=SLACK_LOCAL_MODE,
+)
 
 
 def _current_user_id() -> str:
@@ -1076,6 +1101,173 @@ def run_report_sweep(now=None) -> Dict[str, Any]:
     logger.info(f"Report sweep complete: {generated} generated, {failed} failed")
     metrics.add_metric(name="ReportsGenerated", unit="Count", value=generated)
     return {"generated": generated, "failed": failed, "due": len(due)}
+
+
+# ============================================================================
+# Slack Integration Endpoints
+# ============================================================================
+# Bring-your-own-Slack (OAuth v2). See docs/slack-integration-plan.md.
+# `/slack/oauth/start` is Cognito-guarded and returns the authorize URL as JSON
+# (the SPA fetches it, then does a full-page redirect). `/slack/oauth/callback`
+# is hit by Slack's redirect with NO Cognito context, so it bypasses the
+# authorizer at API Gateway and its trust comes entirely from the signed `state`.
+
+@app.get("/slack/oauth/start")
+@tracer.capture_method
+def slack_oauth_start():
+    """Return the Slack authorize URL for the logged-in user to redirect to."""
+    try:
+        user_id = _current_user_id()
+        return {"authorize_url": slack_service.build_authorize_url(user_id)}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error starting Slack OAuth")
+        return {"error": str(e)}, 500
+
+
+@app.get("/slack/oauth/callback")
+@tracer.capture_method
+def slack_oauth_callback():
+    """Finish OAuth: verify state, exchange code, store token, redirect to SPA.
+
+    Identity is NOT taken from Cognito claims here — it is bound into the signed
+    `state` and recovered by complete_oauth. On success/failure we 302 back to
+    the SPA Integrations page with a status flag so the user lands somewhere sane.
+    """
+    params = app.current_event.query_string_parameters or {}
+    spa_base = os.environ.get("ALLOWED_ORIGIN", "")
+    try:
+        code = params.get("code")
+        state = params.get("state")
+        if not code or not state:
+            return {"error": "Missing code or state"}, 400
+        slack_service.complete_oauth(code=code, state=state)
+        metrics.add_metric(name="SlackConnected", unit="Count", value=1)
+        location = f"{spa_base}/settings/integrations?slack=connected"
+    except ValueError as e:
+        # Bad/expired state — do not reveal detail, just send the user back.
+        logger.warning(f"Slack OAuth callback rejected: {str(e)}")
+        location = f"{spa_base}/settings/integrations?slack=error"
+    except Exception:
+        logger.exception("Error completing Slack OAuth")
+        location = f"{spa_base}/settings/integrations?slack=error"
+    return Response(status_code=302, content_type="text/plain", body="", headers={"Location": location})
+
+
+@app.get("/slack/connections")
+@tracer.capture_method
+def list_slack_connections():
+    """List the user's connected Slack workspaces (never includes the token)."""
+    try:
+        user_id = _current_user_id()
+        return {"connections": slack_service.list_connections(user_id)}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing Slack connections")
+        return {"error": str(e)}, 500
+
+
+@app.get("/slack/connections/<connection_id>/channels")
+@tracer.capture_method
+def list_slack_channels(connection_id: str):
+    """List channels for the picker (conversations.list for this connection)."""
+    try:
+        user_id = _current_user_id()
+        return {"channels": slack_service.list_channels(user_id, connection_id)}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    except Exception as e:
+        logger.exception("Error listing Slack channels")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/slack/connections/<connection_id>")
+@tracer.capture_method
+def disconnect_slack(connection_id: str):
+    """Revoke + delete a Slack connection."""
+    try:
+        user_id = _current_user_id()
+        deleted = slack_service.disconnect(user_id, connection_id)
+        if not deleted:
+            return {"error": "Connection not found"}, 404
+        return {"deleted": True, "connection_id": connection_id}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error disconnecting Slack")
+        return {"error": str(e)}, 500
+
+
+@app.post("/slack/connections/<connection_id>/test")
+@tracer.capture_method
+def test_slack_connection(connection_id: str):
+    """Post a "connection works" message — exercises the post_message seam."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        channel_id = data.get("channel_id")
+        if not channel_id:
+            return {"error": "Missing required field: channel_id"}, 400
+        result = slack_service.post_message(
+            user_id, connection_id, channel_id,
+            text="Homestead Manager connection works ✅",
+        )
+        return {"ok": True, "ts": result.get("ts"), "channel": result.get("channel")}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    except Exception as e:
+        logger.exception("Error testing Slack connection")
+        return {"error": str(e)}, 500
+
+
+@app.post("/slack/connections/dev-stub")
+@tracer.capture_method
+def slack_dev_stub_connect():
+    """LOCAL-ONLY: insert a fake connection row so UI/API work without real Slack.
+
+    Returns 404 outside local mode so the route is invisible in deployed tiers.
+    """
+    if not SLACK_LOCAL_MODE:
+        return {"error": "Not found"}, 404
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        connection = slack_service.dev_stub_connect(
+            user_id, team_name=data.get("team_name", "Local Dev Workspace")
+        )
+        return {"connection": connection}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except Exception as e:
+        logger.exception("Error creating Slack dev stub")
+        return {"error": str(e)}, 500
 
 
 def _is_scheduled_event(event: Dict[str, Any]) -> bool:

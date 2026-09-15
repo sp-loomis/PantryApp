@@ -224,6 +224,97 @@ module "messages_table" {
   tags         = var.env_tags
 }
 
+# ============================================================================
+# Slack integration — connections table, token-encryption KMS key, app secret
+# See docs/slack-integration-plan.md.
+# ============================================================================
+
+# DynamoDB table for per-user Slack workspace connections (user-scoped).
+# connection_id range key allows >1 workspace per user later. The bot token is
+# stored ONLY as a KMS-encrypted ciphertext attribute, never plaintext.
+module "slack_connections_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-slack-connections"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "connection_id"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "connection_id"
+      type = "S"
+    }
+  ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
+# Single-use OAuth `state` nonce store. Each verified callback records its nonce
+# with a conditional put; a replay is rejected. Rows self-expire via DynamoDB TTL
+# on `expires_at` (~state lifetime), so the table stays tiny. Throwaway data, so
+# point-in-time recovery is disabled.
+module "slack_nonces_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-slack-nonces"
+  environment = var.environment
+  hash_key    = "nonce"
+
+  attributes = [
+    {
+      name = "nonce"
+      type = "S"
+    }
+  ]
+
+  ttl_enabled            = true
+  ttl_attribute_name     = "expires_at"
+  point_in_time_recovery = false
+  billing_mode           = var.dynamodb_billing_mode
+  tags                   = var.env_tags
+}
+
+# Customer-managed KMS key used only to encrypt/decrypt Slack bot tokens at rest.
+# Flat ~$1/month regardless of user count (vs. per-user Secrets Manager).
+resource "aws_kms_key" "slack_tokens" {
+  description             = "Encrypts Slack bot tokens for ${var.name_prefix}"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+  tags                    = var.env_tags
+}
+
+resource "aws_kms_alias" "slack_tokens" {
+  name          = "alias/${var.name_prefix}-slack-tokens"
+  target_key_id = aws_kms_key.slack_tokens.key_id
+}
+
+# App-level Slack secret (single secret, not per-user): holds the OAuth
+# client_secret and the HMAC secret used to sign OAuth `state`. The VALUE is
+# populated out-of-band (console/CLI) after apply — never committed. The
+# placeholder version below just creates a readable secret so the Lambda's
+# GetSecretValue does not fail before the real value is set.
+resource "aws_secretsmanager_secret" "slack_app" {
+  name        = "${var.name_prefix}-slack-app"
+  description = "Slack OAuth client_secret + state HMAC secret (populated out-of-band)"
+  tags        = var.env_tags
+}
+
+resource "aws_secretsmanager_secret_version" "slack_app_placeholder" {
+  secret_id     = aws_secretsmanager_secret.slack_app.id
+  secret_string = jsonencode({ client_secret = "", state_hmac = "" })
+
+  # The real secret is set out-of-band; don't let Terraform revert it on apply.
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 # IAM role for Lambda function
 data "aws_iam_policy_document" "lambda_dynamodb_policy" {
   statement {
@@ -248,7 +339,9 @@ data "aws_iam_policy_document" "lambda_dynamodb_policy" {
       "${module.tasks_table.table_arn}/index/*",
       module.reports_table.table_arn,
       module.messages_table.table_arn,
-      "${module.messages_table.table_arn}/index/*"
+      "${module.messages_table.table_arn}/index/*",
+      module.slack_connections_table.table_arn,
+      module.slack_nonces_table.table_arn
     ]
   }
 
@@ -260,6 +353,20 @@ data "aws_iam_policy_document" "lambda_dynamodb_policy" {
       "logs:PutLogEvents"
     ]
     resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # Slack bot-token encryption/decryption (this key only).
+  statement {
+    effect    = "Allow"
+    actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [aws_kms_key.slack_tokens.arn]
+  }
+
+  # Read the app-level Slack secret (client_secret + state HMAC).
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.slack_app.arn]
   }
 }
 
@@ -315,6 +422,15 @@ module "api_lambda" {
     # Origin echoed back in CORS headers on real (Lambda-generated) responses.
     # Kept in sync with the API Gateway CORS config below.
     ALLOWED_ORIGIN = var.web_allowed_origin
+
+    # Slack integration (see docs/slack-integration-plan.md). client_secret and
+    # state HMAC are NOT here — they live in Secrets Manager (SLACK_SECRET_ARN).
+    SLACK_CONNECTIONS_TABLE_NAME = module.slack_connections_table.table_name
+    SLACK_NONCES_TABLE_NAME      = module.slack_nonces_table.table_name
+    SLACK_KMS_KEY_ID             = aws_kms_key.slack_tokens.key_id
+    SLACK_SECRET_ARN             = aws_secretsmanager_secret.slack_app.arn
+    SLACK_CLIENT_ID              = var.slack_client_id
+    SLACK_REDIRECT_URI           = var.slack_redirect_uri
   }
 
   tags = var.env_tags

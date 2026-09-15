@@ -19,6 +19,15 @@ locals {
   lambda_memory_size = 256
   log_retention_days = 7
 
+  # Slack integration (see docs/slack-integration-plan.md). client_id is not
+  # secret; the client_secret + state HMAC live in Secrets Manager (populated
+  # out-of-band). The redirect URI must be registered on the Slack app and
+  # match the deployed API domain, e.g.
+  # https://<api-id>.execute-api.<region>.amazonaws.com/<stage>/slack/oauth/callback.
+  # Fill these in once the dev Slack app + API domain are known.
+  slack_client_id    = ""
+  slack_redirect_uri = ""
+
   # Environment-specific tags
   env_tags = {
     CostCenter = "development"
@@ -40,6 +49,10 @@ inputs = {
 
   # DynamoDB configuration
   dynamodb_billing_mode = local.global_vars.locals.dynamodb_billing_mode
+
+  # Slack integration
+  slack_client_id    = local.slack_client_id
+  slack_redirect_uri = local.slack_redirect_uri
 
   # Environment-specific tags
   env_tags = local.env_tags

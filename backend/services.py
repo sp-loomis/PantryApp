@@ -3,14 +3,23 @@ Service layer for the Pantry App.
 Handles business logic and DynamoDB operations.
 """
 
+import base64
+import hashlib
+import hmac
+import json
+import secrets as _secrets
+import time
+import urllib.parse
+import urllib.request
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from boto3.dynamodb.conditions import Key, Attr
+from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 
-from models import Item, Location, ItemTag, Task, Report, Message
+from models import Item, Location, ItemTag, Task, Report, Message, SlackConnection
 from dimensions import (
     Dimension, DimensionType, validate_dimension, aggregate_dimensions
 )
@@ -1315,3 +1324,339 @@ class ReportGenerator:
             f"{message['message_id']} for user {user_id}"
         )
         return message
+
+
+class SlackError(RuntimeError):
+    """A Slack Web API call returned ``ok: false`` (carries the Slack error code)."""
+
+
+class SlackService:
+    """Bring-your-own-Slack connections: OAuth install, token storage, posting.
+
+    Multi-tenant by ``user_id`` (Cognito sub) — one customer's bot token can
+    never post into another's workspace. Bot tokens are stored ONLY as ciphertext
+    (KMS-encrypted, base64) and never returned by the API. The Slack Web API is
+    called with stdlib ``urllib`` (no SDK dependency); only four methods are used:
+    ``oauth.v2.access``, ``conversations.list``, ``chat.postMessage``,
+    ``auth.revoke``.
+
+    ``post_message`` / ``_get_token`` are the primitives the report/notification
+    engine consumes.
+
+    Local mode (``local_mode=True``, set by the Flask dev shim) short-circuits
+    every AWS/Slack network dependency: tokens are base64-passthrough (no KMS),
+    secrets are stubbed, and Slack calls return canned responses. This lets the
+    SPA and CLI exercise the whole flow offline via ``dev_stub_connect``.
+    """
+
+    AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
+    API_BASE = "https://slack.com/api/"
+    # Minimal bot scopes (see docs/slack-integration-plan.md §2). chat:write to
+    # post; channels:read/groups:read to list channels for the picker;
+    # chat:write.public to post to public channels without an explicit invite.
+    SCOPES = "chat:write,channels:read,groups:read,chat:write.public"
+    STATE_TTL_SECONDS = 600  # signed OAuth state is valid for 10 minutes
+
+    def __init__(
+        self,
+        connections_table,
+        kms_client,
+        secrets_client,
+        *,
+        client_id: str,
+        redirect_uri: str,
+        kms_key_id: Optional[str] = None,
+        secret_arn: Optional[str] = None,
+        nonces_table=None,
+        local_mode: bool = False,
+    ):
+        self.connections_table = connections_table
+        self.kms_client = kms_client
+        self.secrets_client = secrets_client
+        self.client_id = client_id
+        self.redirect_uri = redirect_uri
+        self.kms_key_id = kms_key_id
+        self.secret_arn = secret_arn
+        # Single-use OAuth-state store: each verified nonce is recorded here with
+        # a conditional put so a replayed state is rejected. Rows self-expire via
+        # DynamoDB TTL on ``expires_at``. When None, single-use is not enforced
+        # (misconfiguration) and only the signature + TTL guard the state.
+        self.nonces_table = nonces_table
+        self.local_mode = local_mode
+        self._secret_cache: Optional[Dict[str, str]] = None
+
+    # -- secrets ------------------------------------------------------------
+    def _secret(self) -> Dict[str, str]:
+        """Return the app-level Slack secret JSON, cached per warm invocation.
+
+        Holds ``client_secret`` (for oauth.v2.access) and ``state_hmac`` (for
+        signing OAuth state). Never logged.
+        """
+        if self._secret_cache is not None:
+            return self._secret_cache
+        if self.local_mode:
+            self._secret_cache = {
+                "client_secret": "local-client-secret",
+                "state_hmac": "local-state-hmac",
+            }
+            return self._secret_cache
+        resp = self.secrets_client.get_secret_value(SecretId=self.secret_arn)
+        self._secret_cache = json.loads(resp["SecretString"])
+        return self._secret_cache
+
+    # -- token encryption ---------------------------------------------------
+    def _encrypt(self, token: str) -> str:
+        """Encrypt a bot token to a base64 string for storage.
+
+        Local mode uses a marked passthrough (NO real crypto) so the dev tier
+        needs no KMS; the ``local:`` prefix makes such rows self-identifying.
+        """
+        if self.local_mode:
+            return "local:" + base64.b64encode(token.encode()).decode()
+        blob = self.kms_client.encrypt(KeyId=self.kms_key_id, Plaintext=token.encode())["CiphertextBlob"]
+        return base64.b64encode(blob).decode()
+
+    def _decrypt(self, cipher: str) -> str:
+        """Decrypt a stored bot token ciphertext back to plaintext."""
+        if cipher.startswith("local:"):
+            return base64.b64decode(cipher[len("local:"):]).decode()
+        blob = base64.b64decode(cipher)
+        return self.kms_client.decrypt(CiphertextBlob=blob)["Plaintext"].decode()
+
+    # -- OAuth state (CSRF + identity binding) ------------------------------
+    def _mint_state(self, user_id: str) -> str:
+        """Mint a signed, expiring ``state`` binding the Cognito identity.
+
+        Format: ``base64url(payload).base64url(hmac_sha256(payload))``. The
+        callback is hit by Slack's redirect (no Cognito context), so identity
+        must ride inside a value we can verify — never a plaintext user_id.
+
+        Note: the ``nonce`` gives per-mint entropy but true single-use
+        enforcement (rejecting a replayed valid state) would need a nonce store;
+        that is deferred. The short TTL bounds the replay window.
+        """
+        payload = json.dumps({
+            "user_id": user_id,
+            "nonce": _secrets.token_urlsafe(16),
+            "exp": int(time.time()) + self.STATE_TTL_SECONDS,
+        }, separators=(",", ":")).encode()
+        raw = base64.urlsafe_b64encode(payload).decode()
+        return raw + "." + self._sign(raw)
+
+    def _sign(self, raw: str) -> str:
+        key = self._secret()["state_hmac"].encode()
+        sig = hmac.new(key, raw.encode(), hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(sig).decode()
+
+    def _verify_state(self, state: str) -> str:
+        """Verify a ``state`` blob and return the bound ``user_id``.
+
+        Verifies signature and expiry, then CONSUMES the nonce so the state is
+        single-use: a conditional put records the nonce, and a second attempt to
+        use the same state is rejected. Raises ValueError on a malformed,
+        tampered, expired, or already-used state.
+        """
+        try:
+            raw, sig = state.split(".", 1)
+        except (ValueError, AttributeError):
+            raise ValueError("Malformed OAuth state")
+        # Constant-time signature check before trusting any payload bytes.
+        if not hmac.compare_digest(sig, self._sign(raw)):
+            raise ValueError("Invalid OAuth state signature")
+        payload = json.loads(base64.urlsafe_b64decode(raw))
+        exp = int(payload.get("exp", 0))
+        if exp < int(time.time()):
+            raise ValueError("Expired OAuth state")
+        self._consume_nonce(payload["nonce"], exp)
+        return payload["user_id"]
+
+    def _consume_nonce(self, nonce: str, exp: int) -> None:
+        """Record a nonce once; reject a replay. No-op if no nonce store.
+
+        The row self-expires shortly after the state would have expired anyway
+        (DynamoDB TTL on ``expires_at``), so the table never grows unbounded.
+        """
+        if self.nonces_table is None:
+            return
+        try:
+            self.nonces_table.put_item(
+                Item={"nonce": nonce, "expires_at": exp + 60},
+                ConditionExpression="attribute_not_exists(nonce)",
+            )
+        except ClientError as err:
+            if err.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise ValueError("OAuth state already used")
+            raise
+
+    # -- Slack Web API transport -------------------------------------------
+    def _slack_call(self, method: str, params: Dict[str, str], token: Optional[str] = None) -> Dict[str, Any]:
+        """POST to a Slack Web API method (form-encoded); raise on ``ok: false``.
+
+        In local mode, return canned responses so nothing hits the network.
+        """
+        if self.local_mode:
+            return self._local_response(method, params)
+        data = urllib.parse.urlencode(params).encode()
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(self.API_BASE + method, data=data, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 (fixed https host)
+            body = json.loads(resp.read().decode())
+        if not body.get("ok"):
+            # Slack returns a machine-readable error code, not the token — safe to log.
+            logger.warning(f"Slack API {method} failed: {body.get('error')}")
+            raise SlackError(body.get("error", "unknown_error"))
+        return body
+
+    @staticmethod
+    def _local_response(method: str, params: Dict[str, str]) -> Dict[str, Any]:
+        """Canned Slack responses for the fully-local dev tier."""
+        if method == "oauth.v2.access":
+            return {
+                "ok": True,
+                "access_token": "xoxb-local-stub-token",
+                "scope": SlackService.SCOPES,
+                "bot_user_id": "U_LOCALBOT",
+                "team": {"id": "T_LOCAL", "name": "Local Dev Workspace"},
+                "authed_user": {"id": "U_LOCALUSER"},
+            }
+        if method == "conversations.list":
+            return {"ok": True, "channels": [
+                {"id": "C_LOCAL_GENERAL", "name": "general"},
+                {"id": "C_LOCAL_RANDOM", "name": "random"},
+            ]}
+        if method == "chat.postMessage":
+            return {"ok": True, "channel": params.get("channel"), "ts": "1234567890.000100"}
+        if method == "auth.revoke":
+            return {"ok": True, "revoked": True}
+        return {"ok": True}
+
+    # -- OAuth flow ---------------------------------------------------------
+    def build_authorize_url(self, user_id: str) -> str:
+        """Build the Slack authorize URL for a logged-in user (start of OAuth)."""
+        query = urllib.parse.urlencode({
+            "client_id": self.client_id,
+            "scope": self.SCOPES,
+            "redirect_uri": self.redirect_uri,
+            "state": self._mint_state(user_id),
+        })
+        return f"{self.AUTHORIZE_URL}?{query}"
+
+    def complete_oauth(self, code: str, state: str) -> Dict[str, Any]:
+        """Verify ``state``, exchange ``code`` for a token, store it encrypted.
+
+        Returns the API-safe connection shape (no token).
+        """
+        user_id = self._verify_state(state)  # verify BEFORE calling Slack
+        resp = self._slack_call("oauth.v2.access", {
+            "client_id": self.client_id,
+            "client_secret": self._secret()["client_secret"],
+            "code": code,
+            "redirect_uri": self.redirect_uri,
+        })
+        team = resp.get("team", {}) or {}
+        connection = SlackConnection.create(
+            user_id=user_id,
+            team_id=team.get("id", ""),
+            team_name=team.get("name", ""),
+            bot_token_cipher=self._encrypt(resp["access_token"]),
+            bot_user_id=resp.get("bot_user_id", ""),
+            scopes=resp.get("scope", ""),
+            authed_user_id=(resp.get("authed_user", {}) or {}).get("id", ""),
+        )
+        self.connections_table.put_item(Item=connection.to_dict())
+        logger.info(f"Slack connected: team={connection.team_id} for user={user_id}")
+        return connection.to_public_dict()
+
+    # -- connections --------------------------------------------------------
+    def list_connections(self, user_id: str) -> List[Dict[str, Any]]:
+        """List a user's connected workspaces (token stripped)."""
+        response = self.connections_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id)
+        )
+        return [SlackConnection.public_from_item(item) for item in response.get("Items", [])]
+
+    def list_channels(self, user_id: str, connection_id: str) -> List[Dict[str, Any]]:
+        """List channels for the picker (public + private the bot can see)."""
+        token = self._get_token(user_id, connection_id)
+        resp = self._slack_call("conversations.list", {
+            "types": "public_channel,private_channel",
+            "exclude_archived": "true",
+            "limit": "200",
+        }, token=token)
+        return [{"id": c["id"], "name": c["name"]} for c in resp.get("channels", [])]
+
+    def disconnect(self, user_id: str, connection_id: str) -> bool:
+        """Revoke the token and delete the row — best effort on each half.
+
+        Per the security plan, revoke even if the row delete fails and delete
+        even if revoke fails; a missing connection returns False (→ 404).
+        """
+        item = self._get_item(user_id, connection_id)
+        if not item:
+            return False
+        try:
+            token = self._decrypt(item["bot_token_cipher"])
+            self._slack_call("auth.revoke", {}, token=token)
+        except Exception as exc:  # revoke is best-effort; proceed to delete
+            logger.warning(f"Slack auth.revoke failed for {connection_id}: {exc}")
+        self.connections_table.delete_item(
+            Key={"user_id": user_id, "connection_id": connection_id}
+        )
+        logger.info(f"Slack disconnected: {connection_id} for user={user_id}")
+        return True
+
+    def post_message(
+        self,
+        user_id: str,
+        connection_id: str,
+        channel_id: str,
+        blocks: Optional[List[Dict[str, Any]]] = None,
+        text: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Post a message to a channel — the seam the report engine builds on."""
+        token = self._get_token(user_id, connection_id)
+        params: Dict[str, str] = {"channel": channel_id}
+        if blocks:
+            params["blocks"] = json.dumps(blocks)
+        # Slack requires text or blocks; always send a text fallback for
+        # notifications/accessibility even when blocks are present.
+        params["text"] = text or "Homestead Manager notification"
+        return self._slack_call("chat.postMessage", params, token=token)
+
+    # -- local dev ----------------------------------------------------------
+    def dev_stub_connect(self, user_id: str, team_name: str = "Local Dev Workspace") -> Dict[str, Any]:
+        """Insert a fake connection row for local UI/API work (LOCAL MODE ONLY)."""
+        if not self.local_mode:
+            raise PermissionError("dev_stub_connect is only available in local mode")
+        connection = SlackConnection.create(
+            user_id=user_id,
+            team_id="T_LOCAL",
+            team_name=team_name,
+            bot_token_cipher=self._encrypt("xoxb-local-stub-token"),
+            bot_user_id="U_LOCALBOT",
+            scopes=self.SCOPES,
+            authed_user_id=user_id,
+        )
+        self.connections_table.put_item(Item=connection.to_dict())
+        logger.info(f"Slack dev-stub connected for user={user_id}")
+        return connection.to_public_dict()
+
+    # -- internals ----------------------------------------------------------
+    def _get_item(self, user_id: str, connection_id: str) -> Optional[Dict[str, Any]]:
+        response = self.connections_table.get_item(
+            Key={"user_id": user_id, "connection_id": connection_id}
+        )
+        return response.get("Item")
+
+    def _get_token(self, user_id: str, connection_id: str) -> str:
+        """Decrypt and return the bot token for a connection (internal only).
+
+        Raises ValueError when the connection does not exist (→ 404).
+        """
+        item = self._get_item(user_id, connection_id)
+        if not item:
+            raise ValueError("Slack connection not found")
+        return self._decrypt(item["bot_token_cipher"])
+

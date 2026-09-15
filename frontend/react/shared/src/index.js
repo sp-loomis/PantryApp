@@ -61,6 +61,14 @@ export {
   markUnread,
   deleteMessage
 } from './services/messageService.js';
+export {
+  getAuthorizeUrl,
+  listConnections,
+  listChannels,
+  disconnect as disconnectSlack,
+  testConnection as testSlackConnection,
+  devStubConnect as devStubConnectSlack
+} from './services/slackService.js';
 
 // Hooks
 export { useAuth } from './hooks/useAuth.js';

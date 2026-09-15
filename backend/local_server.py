@@ -45,6 +45,9 @@ if DYNAMODB_ENDPOINT:
 # Silence X-Ray tracing outside Lambda.
 os.environ.setdefault("POWERTOOLS_TRACE_DISABLED", "1")
 os.environ.setdefault("POWERTOOLS_METRICS_NAMESPACE", "PantryAppLocal")
+# Flip SlackService into no-network local mode (passthrough token storage,
+# stubbed secret + canned Slack responses) and enable the dev-stub connect route.
+os.environ.setdefault("ENVIRONMENT", "local")
 for env_name, table_name in TABLE_NAMES.items():
     os.environ.setdefault(env_name, table_name)
 

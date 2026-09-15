@@ -18,6 +18,8 @@ import {
   FiClock,
   FiBell,
   FiPlay,
+  FiSettings,
+  FiSlack,
 } from 'react-icons/fi';
 import {
   RiSearch2Line,
@@ -41,3 +43,5 @@ export const ClockIcon = (props) => <Icon as={FiClock} {...props} />;
 export const BellIcon = (props) => <Icon as={FiBell} {...props} />;
 export const RunIcon = (props) => <Icon as={FiPlay} {...props} />;
 export const ReportIcon = (props) => <Icon as={RiMegaphoneLine} {...props} />;
+export const SettingsIcon = (props) => <Icon as={FiSettings} {...props} />;
+export const SlackIcon = (props) => <Icon as={FiSlack} {...props} />;

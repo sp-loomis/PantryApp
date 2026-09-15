@@ -28,6 +28,8 @@ import TaskFormPage from './pages/TaskFormPage';
 import MessageLogPage from './pages/MessageLogPage';
 import ReportsPage from './pages/ReportsPage';
 import ReportFormPage from './pages/ReportFormPage';
+import SettingsPage from './pages/SettingsPage';
+import IntegrationsPage from './pages/IntegrationsPage';
 import theme from './theme/theme';
 
 /** Protected layout: auth gate + inventory state + the app nav shell. */
@@ -72,6 +74,8 @@ function App() {
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/reports/new" element={<ReportFormPage />} />
               <Route path="/reports/:reportId/edit" element={<ReportFormPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/settings/integrations" element={<IntegrationsPage />} />
             </Route>
 
             {/* Unknown routes → home */}

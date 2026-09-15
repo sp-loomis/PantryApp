@@ -50,6 +50,38 @@ auto-generate. Two ways to exercise generation locally:
   "
   ```
 
+## Slack integration locally
+
+Real Slack OAuth needs a public HTTPS callback (`/slack/oauth/callback`), which
+the local shim on `:8000` cannot receive. So the local tier uses a **dev-stub
+connect** instead of real OAuth: the shim sets `ENVIRONMENT=local`, which flips
+`SlackService` into a no-network mode — passthrough token "encryption" (no KMS),
+a stubbed app secret, and canned Slack API responses (fake channels, ok posts).
+
+Create a fake connection (no real Slack) and exercise the whole flow:
+
+```bash
+# via the CLI (invokes the Lambda directly)
+cd frontend/cli
+python pantry_cli.py slack connections list        # []
+# dev-stub has no CLI command; use the web app button or curl the shim:
+curl -X POST http://localhost:8000/slack/connections/dev-stub \
+  -H 'Content-Type: application/json' -d '{"team_name":"Local Dev Workspace"}'
+python pantry_cli.py slack channels list <connection_id>   # canned: general, random
+python pantry_cli.py slack test <connection_id> --channel C_LOCAL_GENERAL
+python pantry_cli.py slack disconnect <connection_id>
+```
+
+In the web app: **Settings → Integrations** shows an **Add dev stub** button (only
+in local auth mode) beside **Connect Slack**. Use it to create a fake workspace,
+then try the channel picker, **Send test**, and **Disconnect**. `seed_local.py`
+creates the `slack-connections` table alongside the others (idempotent).
+
+To test **real** OAuth end to end you need a public HTTPS tunnel to `:8000`
+(e.g. `ngrok http 8000`) registered as the redirect URL on a Slack app, plus the
+`SLACK_CLIENT_ID` / `SLACK_REDIRECT_URI` env vars and the app secret — out of
+scope for the everyday local loop.
+
 ## Config knobs (backend shim)
 
 | Env var | Default | Purpose |

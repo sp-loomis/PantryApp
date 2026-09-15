@@ -21,6 +21,8 @@ ITEM_TAGS_TABLE = "pantry-local-item-tags"
 TASKS_TABLE = "pantry-local-tasks"
 REPORTS_TABLE = "pantry-local-reports"
 MESSAGES_TABLE = "pantry-local-messages"
+SLACK_CONNECTIONS_TABLE = "pantry-local-slack-connections"
+SLACK_NONCES_TABLE = "pantry-local-slack-nonces"
 
 TABLE_NAMES = {
     "ITEMS_TABLE_NAME": ITEMS_TABLE,
@@ -29,6 +31,8 @@ TABLE_NAMES = {
     "TASKS_TABLE_NAME": TASKS_TABLE,
     "REPORTS_TABLE_NAME": REPORTS_TABLE,
     "MESSAGES_TABLE_NAME": MESSAGES_TABLE,
+    "SLACK_CONNECTIONS_TABLE_NAME": SLACK_CONNECTIONS_TABLE,
+    "SLACK_NONCES_TABLE_NAME": SLACK_NONCES_TABLE,
 }
 
 
@@ -150,4 +154,28 @@ def create_tables(dynamodb) -> None:
         # UnreadIndex is sparse: only unread messages carry unread_sort, so only
         # they appear here. Marking read removes the attribute (and the row).
         GlobalSecondaryIndexes=[_gsi("UnreadIndex", "user_id", "unread_sort")],
+    )
+    _create(
+        dynamodb,
+        TableName=SLACK_CONNECTIONS_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "connection_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "connection_id", "AttributeType": "S"},
+        ],
+    )
+    _create(
+        dynamodb,
+        TableName=SLACK_NONCES_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "nonce", "KeyType": "HASH"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "nonce", "AttributeType": "S"},
+        ],
     )

@@ -18,6 +18,7 @@ import {
   TagIcon,
   PlusIcon,
   ReportIcon,
+  SettingsIcon,
 } from './icons';
 import NotificationsMenu from './NotificationsMenu';
 
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { to: '/tasks', label: 'Tasks', icon: TaskIcon },
   { to: '/reports', label: 'Reports', icon: ReportIcon },
   { to: '/tags', label: 'Tags', icon: TagIcon },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/items/new', label: 'Add', icon: PlusIcon, accent: true },
 ];
 

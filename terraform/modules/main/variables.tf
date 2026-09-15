@@ -59,3 +59,23 @@ variable "web_allowed_origin" {
   type        = string
   default     = "*"
 }
+
+variable "slack_client_id" {
+  description = <<-EOT
+    Slack app OAuth client_id (public-ish; injected into the Lambda env). The
+    matching client_secret is NOT a variable — it is stored in Secrets Manager
+    and populated out-of-band. Empty disables the Slack OAuth start flow.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "slack_redirect_uri" {
+  description = <<-EOT
+    HTTPS OAuth redirect URI registered on the Slack app for this environment,
+    e.g. https://<api-domain>/slack/oauth/callback. Must match a redirect URL
+    allowlisted on the Slack app.
+  EOT
+  type        = string
+  default     = ""
+}

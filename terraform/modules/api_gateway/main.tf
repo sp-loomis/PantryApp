@@ -134,6 +134,48 @@ resource "aws_api_gateway_integration_response" "proxy_options" {
 }
 
 # ============================================================================
+# Slack OAuth callback — explicit path, NO Cognito authorizer
+# ============================================================================
+# Slack's redirect hits /slack/oauth/callback with no Authorization header, so
+# it must bypass the Cognito authorizer. An explicit resource path outranks the
+# greedy {proxy+}, so only this exact path is unauthenticated; trust comes from
+# the signed `state` the Lambda verifies. Every other /slack/* path still flows
+# through the Cognito-guarded {proxy+}.
+resource "aws_api_gateway_resource" "slack" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "slack"
+}
+
+resource "aws_api_gateway_resource" "slack_oauth" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.slack.id
+  path_part   = "oauth"
+}
+
+resource "aws_api_gateway_resource" "slack_oauth_callback" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.slack_oauth.id
+  path_part   = "callback"
+}
+
+resource "aws_api_gateway_method" "slack_oauth_callback" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.slack_oauth_callback.id
+  http_method   = "GET"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "slack_oauth_callback" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.slack_oauth_callback.id
+  http_method             = aws_api_gateway_method.slack_oauth_callback.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.lambda_invoke_arn
+}
+
+# ============================================================================
 # CORS on gateway-generated error responses
 # ============================================================================
 # Errors raised by API Gateway itself (e.g. a 401 from the authorizer) never
@@ -179,6 +221,9 @@ resource "aws_api_gateway_deployment" "deployment" {
       aws_api_gateway_authorizer.cognito.id,
       aws_api_gateway_gateway_response.default_4xx.id,
       aws_api_gateway_gateway_response.default_5xx.id,
+      aws_api_gateway_resource.slack_oauth_callback.id,
+      aws_api_gateway_method.slack_oauth_callback.id,
+      aws_api_gateway_integration.slack_oauth_callback.id,
     ]))
   }
 

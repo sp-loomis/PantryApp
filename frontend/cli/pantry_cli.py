@@ -864,5 +864,85 @@ def status():
     print(json.dumps(result, indent=2))
 
 
+# ============================================================================
+# Slack Integration Commands
+# ============================================================================
+# Mirrors the connections API (docs/slack-integration-plan.md §6). The OAuth
+# start/callback endpoints are browser-redirect flows and have NO CLI mirror
+# (documented exception to the one-to-one rule).
+
+@cli.group()
+def slack():
+    """Manage Slack workspace connections."""
+    pass
+
+
+@slack.group(name='connections')
+def slack_connections():
+    """Manage connected Slack workspaces."""
+    pass
+
+
+@slack_connections.command(name='list')
+@click.option('--user-id', help='[Admin only] List connections for specific user')
+def list_slack_connections(user_id: Optional[str]):
+    """List connected Slack workspaces (never includes the bot token)."""
+    result = invoke_lambda('GET', '/slack/connections', user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@slack.group(name='channels')
+def slack_channels():
+    """Inspect channels of a connected workspace."""
+    pass
+
+
+@slack_channels.command(name='list')
+@click.argument('connection_id')
+@click.option('--user-id', help='[Admin only] List channels for specific user')
+def list_slack_channels(connection_id: str, user_id: Optional[str]):
+    """List channels available to a connection (for the picker)."""
+    result = invoke_lambda('GET', f'/slack/connections/{connection_id}/channels', user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@slack.command(name='disconnect')
+@click.argument('connection_id')
+@click.option('--user-id', help='[Admin only] Disconnect for specific user')
+@click.confirmation_option(prompt='Are you sure you want to disconnect this Slack workspace?')
+def disconnect_slack(connection_id: str, user_id: Optional[str]):
+    """Revoke and delete a Slack connection."""
+    result = invoke_lambda('DELETE', f'/slack/connections/{connection_id}', user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
+@slack.command(name='test')
+@click.argument('connection_id')
+@click.option('--channel', 'channel_id', required=True, help='Channel ID to post the test message to')
+@click.option('--user-id', help='[Admin only] Test for specific user')
+def test_slack(connection_id: str, channel_id: str, user_id: Optional[str]):
+    """Post a 'connection works' message to a channel."""
+    result = invoke_lambda('POST', f'/slack/connections/{connection_id}/test', {
+        'channel_id': channel_id
+    }, user_id=user_id)
+
+    print(json.dumps(result, indent=2))
+
+    if 'error' in result:
+        sys.exit(1)
+
+
 if __name__ == '__main__':
     cli()

@@ -28,6 +28,8 @@ ITEM_TAGS_TABLE = "test-item-tags"
 TASKS_TABLE = "test-tasks"
 REPORTS_TABLE = "test-reports"
 MESSAGES_TABLE = "test-messages"
+SLACK_CONNECTIONS_TABLE = "test-slack-connections"
+SLACK_NONCES_TABLE = "test-slack-nonces"
 
 # Default authenticated user for requests that don't specify one.
 USER = "user-1"
@@ -134,6 +136,24 @@ def create_tables(dynamodb) -> None:
         ],
         # UnreadIndex is sparse: only unread messages carry unread_sort.
         GlobalSecondaryIndexes=[_gsi("UnreadIndex", "user_id", "unread_sort")],
+    )
+    dynamodb.create_table(
+        TableName=SLACK_CONNECTIONS_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "connection_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "connection_id", "AttributeType": "S"},
+        ],
+    )
+    dynamodb.create_table(
+        TableName=SLACK_NONCES_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[{"AttributeName": "nonce", "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": "nonce", "AttributeType": "S"}],
     )
 
 
@@ -291,6 +311,11 @@ def api(dynamodb_tables):
     os.environ["TASKS_TABLE_NAME"] = TASKS_TABLE
     os.environ["REPORTS_TABLE_NAME"] = REPORTS_TABLE
     os.environ["MESSAGES_TABLE_NAME"] = MESSAGES_TABLE
+    os.environ["SLACK_CONNECTIONS_TABLE_NAME"] = SLACK_CONNECTIONS_TABLE
+    os.environ["SLACK_NONCES_TABLE_NAME"] = SLACK_NONCES_TABLE
+    # Local mode keeps SlackService off KMS/Secrets/Slack (canned responses) and
+    # enables the dev-stub connect route, so Slack routes are E2E-testable.
+    os.environ["ENVIRONMENT"] = "local"
 
     import app
     importlib.reload(app)

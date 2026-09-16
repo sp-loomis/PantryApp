@@ -82,10 +82,10 @@ tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
 task_service = TaskService(dynamodb.Table(TASKS_TABLE))
 report_service = ReportService(dynamodb.Table(REPORTS_TABLE))
 message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
-report_generator = ReportGenerator(report_service, message_service, task_service, item_service)
 
 # KMS/Secrets clients are lazy (boto3 resolves creds on first call), so building
 # them at import time is cheap even when the Slack feature is unconfigured.
+# Built before report_generator so reports can deliver through it.
 slack_service = SlackService(
     dynamodb.Table(SLACK_CONNECTIONS_TABLE) if SLACK_CONNECTIONS_TABLE else None,
     boto3.client('kms'),
@@ -96,6 +96,13 @@ slack_service = SlackService(
     secret_arn=SLACK_SECRET_ARN,
     nonces_table=dynamodb.Table(SLACK_NONCES_TABLE) if SLACK_NONCES_TABLE else None,
     local_mode=SLACK_LOCAL_MODE,
+)
+
+# The report engine delivers through slack_service when a report has a Slack
+# destination (best-effort; in-app message log is always written).
+report_generator = ReportGenerator(
+    report_service, message_service, task_service, item_service,
+    slack_service=slack_service,
 )
 
 
@@ -828,6 +835,7 @@ def create_report():
             schedule=data['schedule'],
             sections=data.get('sections', []),
             enabled=data.get('enabled', True),
+            delivery=data.get('delivery'),
         )
         metrics.add_metric(name="ReportCreated", unit="Count", value=1)
         return {"report": report}, 201

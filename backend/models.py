@@ -205,6 +205,9 @@ class Report:
     enabled: bool = True
     schedule: Dict[str, Any] = field(default_factory=dict)
     sections: List[Dict[str, Any]] = field(default_factory=list)
+    # Optional delivery destinations beyond the in-app message log, e.g.
+    # {"slack": {"connection_id": ..., "channel_id": ...}}. Empty = in-app only.
+    delivery: Dict[str, Any] = field(default_factory=dict)
     next_run: Optional[str] = None
     last_run_at: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -219,6 +222,7 @@ class Report:
         sections: List[Dict[str, Any]] = None,
         enabled: bool = True,
         next_run: Optional[str] = None,
+        delivery: Dict[str, Any] = None,
     ) -> "Report":
         """Create a new Report instance."""
         return cls(
@@ -228,6 +232,7 @@ class Report:
             enabled=enabled,
             schedule=schedule or {},
             sections=sections or [],
+            delivery=delivery or {},
             next_run=next_run,
         )
 
@@ -240,6 +245,7 @@ class Report:
             "enabled": self.enabled,
             "schedule": self.schedule,
             "sections": self.sections,
+            "delivery": self.delivery,
             "next_run": self.next_run,
             "last_run_at": self.last_run_at,
             "created_at": self.created_at,

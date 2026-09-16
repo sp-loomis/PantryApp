@@ -29,6 +29,7 @@ from recurrence import (
 )
 from schedules import compute_next_run, validate_schedule
 from report_sections import render_section, validate_sections
+from slack_blocks import render_message_blocks
 
 logger = Logger(child=True)
 
@@ -41,6 +42,26 @@ COPIES_MAX = 100
 def _now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_delivery(delivery: Any) -> None:
+    """Validate a report's optional delivery config, raising ValueError.
+
+    Empty/None means in-app only. A ``slack`` destination requires non-empty
+    string ``connection_id`` and ``channel_id``.
+    """
+    if not delivery:
+        return
+    if not isinstance(delivery, dict):
+        raise ValueError("delivery must be an object")
+    slack = delivery.get("slack")
+    if slack is not None:
+        if not isinstance(slack, dict):
+            raise ValueError("delivery.slack must be an object")
+        for key in ("connection_id", "channel_id"):
+            value = slack.get(key)
+            if not value or not isinstance(value, str):
+                raise ValueError(f"delivery.slack requires a non-empty '{key}'")
 
 
 def _parse_iso(value: str) -> datetime:
@@ -1007,6 +1028,7 @@ class ReportService:
         report.setdefault("enabled", True)
         report.setdefault("schedule", {})
         report.setdefault("sections", [])
+        report.setdefault("delivery", {})
         report.setdefault("next_run", None)
         report.setdefault("last_run_at", None)
         report["schedule"] = _decimals_to_float(report["schedule"])
@@ -1021,11 +1043,13 @@ class ReportService:
         sections: List[Dict[str, Any]] = None,
         enabled: bool = True,
         now: Optional[Any] = None,
+        delivery: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
-        """Create a report, validating its schedule and section rules."""
+        """Create a report, validating its schedule, section rules, and delivery."""
         sections = sections or []
         validate_schedule(schedule)
         validate_sections(sections)
+        _validate_delivery(delivery)
 
         next_run = compute_next_run(schedule, now)
         report = Report.create(
@@ -1035,6 +1059,7 @@ class ReportService:
             sections=sections,
             enabled=enabled,
             next_run=next_run,
+            delivery=delivery or {},
         )
         self.reports_table.put_item(Item=report.to_dict())
         logger.info(f"Created report: {report.report_id} for user: {user_id}")
@@ -1068,6 +1093,8 @@ class ReportService:
             validate_schedule(updates["schedule"])
         if "sections" in updates:
             validate_sections(updates["sections"])
+        if "delivery" in updates:
+            _validate_delivery(updates["delivery"])
 
         set_parts = ["updated_at = :updated_at"]
         expr_values = {":updated_at": _now_iso()}
@@ -1078,7 +1105,7 @@ class ReportService:
             expr_values[":name"] = updates["name"]
             expr_names["#n"] = "name"
 
-        for field_name in ("enabled", "sections"):
+        for field_name in ("enabled", "sections", "delivery"):
             if field_name in updates:
                 set_parts.append(f"{field_name} = :{field_name}")
                 expr_values[f":{field_name}"] = updates[field_name]
@@ -1291,12 +1318,15 @@ class ReportGenerator:
     generation time via the injected services, then snapshotted into the message.
     """
 
-    def __init__(self, report_service, message_service, task_service, item_service):
+    def __init__(self, report_service, message_service, task_service, item_service,
+                 slack_service=None):
         self.report_service = report_service
         self.message_service = message_service
         # Exposed as attributes so section renderers can reach the service layer.
         self.task_service = task_service
         self.item_service = item_service
+        # Optional Slack delivery sink; None disables Slack posting.
+        self.slack_service = slack_service
 
     def generate(
         self, report: Dict[str, Any], tz: Optional[str] = None, now: Optional[Any] = None
@@ -1323,7 +1353,37 @@ class ReportGenerator:
             f"Generated report {report['report_id']} -> message "
             f"{message['message_id']} for user {user_id}"
         )
+        self._deliver_to_slack(report, message)
         return message
+
+    def _deliver_to_slack(self, report: Dict[str, Any], message: Dict[str, Any]) -> None:
+        """Post the generated report to Slack when the report has a destination.
+
+        Best-effort: a delivery failure (revoked token, bad channel, Slack down)
+        is logged and swallowed so the in-app message still stands and the sweep
+        keeps going. Ownership is enforced by post_message scoping the token to
+        the report's user_id.
+        """
+        target = (report.get("delivery") or {}).get("slack")
+        if not target or self.slack_service is None:
+            return
+        try:
+            blocks = render_message_blocks(message["title"], message.get("sections", []))
+            self.slack_service.post_message(
+                report["user_id"],
+                target["connection_id"],
+                target["channel_id"],
+                blocks=blocks,
+                text=message["title"],
+            )
+            logger.info(
+                f"Delivered report {report['report_id']} to Slack channel "
+                f"{target['channel_id']}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Slack delivery failed for report {report.get('report_id')}: {exc}"
+            )
 
 
 class SlackError(RuntimeError):

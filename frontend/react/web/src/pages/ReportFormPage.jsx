@@ -33,12 +33,14 @@ import {
   createReport,
   updateReport,
   listTags,
+  listConnections,
   validateReportName,
   validateSchedule,
 } from '@pantry-app/shared';
 import PageHeader from '../components/PageHeader';
 import ErrorMessage from '../components/ErrorMessage';
 import LocationSelect from '../components/LocationSelect';
+import ChannelSelect from '../components/ChannelSelect';
 import { PlusIcon, TrashIcon } from '../components/icons';
 
 const WEEKDAYS = [
@@ -172,6 +174,10 @@ export default function ReportFormPage() {
   const [dayOfMonth, setDayOfMonth] = useState(1);
   const [tz] = useState(browserTz());
   const [sections, setSections] = useState([defaultSection('task_query')]);
+  // Optional Slack delivery destination. Empty connection = in-app only.
+  const [slackConnectionId, setSlackConnectionId] = useState('');
+  const [slackChannelId, setSlackChannelId] = useState('');
+  const [connections, setConnections] = useState([]);
 
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(isEdit);
@@ -184,6 +190,13 @@ export default function ReportFormPage() {
     listTags()
       .then((all) => setTagOptions(all.map((t) => ({ value: t, label: t }))))
       .catch(() => setTagOptions([]));
+  }, []);
+
+  // Load connected Slack workspaces for the delivery picker.
+  useEffect(() => {
+    listConnections()
+      .then(setConnections)
+      .catch(() => setConnections([]));
   }, []);
 
   const loadExisting = useCallback(async () => {
@@ -200,6 +213,11 @@ export default function ReportFormPage() {
       setTimeOfDay(`${(s.time_of_day || '09:00').slice(0, 2)}:00`);
       setWeekday(s.weekday ?? 0);
       setDayOfMonth(s.day_of_month ?? 1);
+      const slack = report.delivery?.slack;
+      if (slack) {
+        setSlackConnectionId(slack.connection_id || '');
+        setSlackChannelId(slack.channel_id || '');
+      }
       setSections(
         (report.sections || []).map((sec) => {
           const config = { ...(sec.config || {}) };
@@ -262,11 +280,19 @@ export default function ReportFormPage() {
     e.preventDefault();
     if (!validate()) return;
 
+    // A Slack destination requires both a connection and a channel; otherwise
+    // the report is in-app only (empty delivery).
+    const delivery =
+      slackConnectionId && slackChannelId
+        ? { slack: { connection_id: slackConnectionId, channel_id: slackChannelId } }
+        : {};
+
     const payload = {
       name: name.trim(),
       enabled,
       schedule: buildSchedule(),
       sections,
+      delivery,
     };
 
     try {
@@ -453,6 +479,55 @@ export default function ReportFormPage() {
                 </Box>
               ))}
             </VStack>
+          </Box>
+
+          <Divider />
+
+          {/* Optional Slack delivery */}
+          <Box>
+            <Heading size="sm" mb={1}>
+              Deliver to Slack
+            </Heading>
+            <Text fontSize="xs" color="gray.400" mb={3}>
+              Optional. Also posts this report to a Slack channel when it runs.
+              Leave blank to keep it in-app only.
+            </Text>
+            {connections.length === 0 ? (
+              <Text fontSize="sm" color="gray.500">
+                No Slack workspace connected. Connect one under Settings →
+                Integrations to enable Slack delivery.
+              </Text>
+            ) : (
+              <HStack align="start" spacing={3}>
+                <FormControl>
+                  <FormLabel fontSize="sm">Workspace</FormLabel>
+                  <Select
+                    value={slackConnectionId}
+                    placeholder="In-app only"
+                    onChange={(e) => {
+                      setSlackConnectionId(e.target.value);
+                      setSlackChannelId(''); // reset channel when workspace changes
+                    }}
+                  >
+                    {connections.map((c) => (
+                      <option key={c.connection_id} value={c.connection_id}>
+                        {c.team_name || 'Slack workspace'}
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+                {slackConnectionId && (
+                  <FormControl>
+                    <FormLabel fontSize="sm">Channel</FormLabel>
+                    <ChannelSelect
+                      connectionId={slackConnectionId}
+                      value={slackChannelId}
+                      onChange={(e) => setSlackChannelId(e.target.value)}
+                    />
+                  </FormControl>
+                )}
+              </HStack>
+            )}
           </Box>
 
           <Button type="submit" isLoading={submitting} loadingText="Saving..." width="full">

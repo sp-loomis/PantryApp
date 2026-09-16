@@ -147,3 +147,34 @@ def test_handler_routes_scheduled_event_to_sweep(api):
     # Use the EventBridge-shaped event to exercise the handler branch.
     result = app.lambda_handler({"source": "aws.events", "detail-type": "Scheduled Event"}, FakeLambdaContext())
     assert "generated" in result
+
+
+def test_report_with_slack_delivery_runs(api):
+    """A report with a Slack destination generates + delivers (local canned)."""
+    conn = api.call("POST", "/slack/connections/dev-stub", body={"team_name": "Acme"}).body["connection"]
+    body = _report_body("Slack digest")
+    body["delivery"] = {"slack": {"connection_id": conn["connection_id"], "channel_id": "C_LOCAL_GENERAL"}}
+    created = api.call("POST", "/reports", body=body)
+    assert created.status_code == 201
+    assert created.body["report"]["delivery"]["slack"]["channel_id"] == "C_LOCAL_GENERAL"
+
+    run = api.call("POST", f"/reports/{created.body['report']['report_id']}/run", query=UTC)
+    assert run.status_code == 201
+    assert run.body["message"]["title"] == "Slack digest"
+
+
+def test_report_delivery_survives_bad_connection(api):
+    """Best-effort: an unknown connection doesn't fail report generation."""
+    body = _report_body("Broken delivery")
+    body["delivery"] = {"slack": {"connection_id": "nope", "channel_id": "C_LOCAL_GENERAL"}}
+    created = api.call("POST", "/reports", body=body)
+    assert created.status_code == 201
+    run = api.call("POST", f"/reports/{created.body['report']['report_id']}/run", query=UTC)
+    assert run.status_code == 201  # in-app message still created
+
+
+def test_create_report_rejects_bad_delivery(api):
+    body = _report_body("Bad")
+    body["delivery"] = {"slack": {"connection_id": ""}}
+    resp = api.call("POST", "/reports", body=body)
+    assert resp.status_code == 400

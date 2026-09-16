@@ -1534,7 +1534,17 @@ class SlackService:
 
     # -- OAuth flow ---------------------------------------------------------
     def build_authorize_url(self, user_id: str) -> str:
-        """Build the Slack authorize URL for a logged-in user (start of OAuth)."""
+        """Build the Slack authorize URL for a logged-in user (start of OAuth).
+
+        Raises ValueError when the Slack app is not configured (empty client_id
+        or redirect_uri) so the caller surfaces a clear error instead of
+        redirecting to a broken Slack authorize page ("Please specify client_id").
+        """
+        if not self.client_id or not self.redirect_uri:
+            raise ValueError(
+                "Slack integration is not configured (missing SLACK_CLIENT_ID / "
+                "SLACK_REDIRECT_URI)"
+            )
         query = urllib.parse.urlencode({
             "client_id": self.client_id,
             "scope": self.SCOPES,

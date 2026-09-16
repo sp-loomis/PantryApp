@@ -1125,6 +1125,10 @@ def slack_oauth_start():
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
+    except ValueError as e:
+        # Slack app not configured (missing client_id / redirect_uri).
+        logger.warning(f"Slack OAuth start unavailable: {str(e)}")
+        return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error starting Slack OAuth")
         return {"error": str(e)}, 500

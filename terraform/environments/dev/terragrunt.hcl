@@ -25,8 +25,8 @@ locals {
   # match the deployed API domain, e.g.
   # https://<api-id>.execute-api.<region>.amazonaws.com/<stage>/slack/oauth/callback.
   # Fill these in once the dev Slack app + API domain are known.
-  slack_client_id    = ""
-  slack_redirect_uri = ""
+  slack_client_id    = "12101240590464.12072855586226"
+  slack_redirect_uri = "https://008yyus1pd.execute-api.us-east-1.amazonaws.com/dev/slack/oauth/callback"
 
   # Environment-specific tags
   env_tags = {

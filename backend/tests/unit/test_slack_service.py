@@ -177,3 +177,20 @@ def test_slack_call_raises_on_not_ok(slack_service, monkeypatch):
 def test_dev_stub_rejected_when_not_local(slack_service):
     with pytest.raises(PermissionError):
         slack_service.dev_stub_connect(USER)
+
+
+def test_authorize_url_requires_configuration(dynamodb_tables):
+    """An empty client_id raises instead of building a broken Slack URL."""
+    svc = SlackService(
+        dynamodb_tables.Table(SLACK_CONNECTIONS_TABLE),
+        FakeKMS(),
+        FakeSecrets(),
+        client_id="",  # unconfigured
+        redirect_uri="https://x/cb",
+        kms_key_id="key-123",
+        secret_arn="arn:secret",
+        nonces_table=dynamodb_tables.Table(SLACK_NONCES_TABLE),
+        local_mode=False,
+    )
+    with pytest.raises(ValueError, match="not configured"):
+        svc.build_authorize_url(USER)

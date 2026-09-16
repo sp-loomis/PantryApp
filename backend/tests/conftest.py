@@ -316,6 +316,9 @@ def api(dynamodb_tables):
     # Local mode keeps SlackService off KMS/Secrets/Slack (canned responses) and
     # enables the dev-stub connect route, so Slack routes are E2E-testable.
     os.environ["ENVIRONMENT"] = "local"
+    # Non-empty so build_authorize_url is configured (the OAuth start guard).
+    os.environ["SLACK_CLIENT_ID"] = "test-client-id"
+    os.environ["SLACK_REDIRECT_URI"] = "https://test.example.com/slack/oauth/callback"
 
     import app
     importlib.reload(app)

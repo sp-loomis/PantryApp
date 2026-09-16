@@ -103,6 +103,7 @@ slack_service = SlackService(
 report_generator = ReportGenerator(
     report_service, message_service, task_service, item_service,
     slack_service=slack_service,
+    app_base_url=WEB_APP_URL,
 )
 
 

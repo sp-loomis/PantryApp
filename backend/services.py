@@ -1319,7 +1319,7 @@ class ReportGenerator:
     """
 
     def __init__(self, report_service, message_service, task_service, item_service,
-                 slack_service=None):
+                 slack_service=None, app_base_url=""):
         self.report_service = report_service
         self.message_service = message_service
         # Exposed as attributes so section renderers can reach the service layer.
@@ -1327,6 +1327,8 @@ class ReportGenerator:
         self.item_service = item_service
         # Optional Slack delivery sink; None disables Slack posting.
         self.slack_service = slack_service
+        # Web app base URL for links back from Slack (e.g. task/item deep links).
+        self.app_base_url = app_base_url
 
     def generate(
         self, report: Dict[str, Any], tz: Optional[str] = None, now: Optional[Any] = None
@@ -1368,7 +1370,9 @@ class ReportGenerator:
         if not target or self.slack_service is None:
             return
         try:
-            blocks = render_message_blocks(message["title"], message.get("sections", []))
+            blocks = render_message_blocks(
+                message["title"], message.get("sections", []), self.app_base_url
+            )
             self.slack_service.post_message(
                 report["user_id"],
                 target["connection_id"],

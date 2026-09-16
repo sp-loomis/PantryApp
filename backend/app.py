@@ -57,6 +57,23 @@ SLACK_SECRET_ARN = os.environ.get('SLACK_SECRET_ARN')
 # The Flask dev shim sets ENVIRONMENT=local; that flips SlackService into a
 # no-network mode (passthrough token "encryption", stubbed secret + Slack calls).
 SLACK_LOCAL_MODE = os.environ.get('ENVIRONMENT') == 'local'
+# Concrete SPA origin the OAuth callback redirects the browser back to (e.g.
+# the CloudFront URL, or http://localhost:5173 in dev). Distinct from
+# ALLOWED_ORIGIN, which is a CORS value and may be the "*" wildcard.
+WEB_APP_URL = os.environ.get('WEB_APP_URL', '')
+
+
+def _slack_spa_base() -> str:
+    """Return a concrete SPA base URL for the post-OAuth redirect.
+
+    The OAuth callback runs server-side and must send the browser back to the
+    SPA, so it needs a real origin — never the CORS wildcard. WEB_APP_URL wins;
+    ALLOWED_ORIGIN is used only when it is a concrete origin (not "*"). Empty if
+    neither is usable (the callback then redirects to a relative path).
+    """
+    allowed_origin = os.environ.get('ALLOWED_ORIGIN', '')
+    base = WEB_APP_URL or ('' if allowed_origin == '*' else allowed_origin)
+    return base.rstrip('/')
 
 # Initialize services
 item_service = ItemService(dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE))
@@ -1144,7 +1161,7 @@ def slack_oauth_callback():
     the SPA Integrations page with a status flag so the user lands somewhere sane.
     """
     params = app.current_event.query_string_parameters or {}
-    spa_base = os.environ.get("ALLOWED_ORIGIN", "")
+    spa_base = _slack_spa_base()
     try:
         code = params.get("code")
         state = params.get("state")

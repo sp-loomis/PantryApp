@@ -108,6 +108,21 @@ def test_oauth_callback_bad_state_redirects_error(api):
     assert listing.body["connections"] == []
 
 
+def test_spa_base_never_uses_cors_wildcard(api, monkeypatch):
+    """The post-OAuth redirect base must be a concrete origin, never '*'."""
+    app = api._app
+    # WEB_APP_URL wins and is trailing-slash trimmed.
+    monkeypatch.setattr(app, "WEB_APP_URL", "https://app.example.com/")
+    assert app._slack_spa_base() == "https://app.example.com"
+    # A CORS wildcard is ignored (would otherwise produce "*/settings/...").
+    monkeypatch.setattr(app, "WEB_APP_URL", "")
+    monkeypatch.setenv("ALLOWED_ORIGIN", "*")
+    assert app._slack_spa_base() == ""
+    # A concrete ALLOWED_ORIGIN is an acceptable fallback.
+    monkeypatch.setenv("ALLOWED_ORIGIN", "https://spa.example.com")
+    assert app._slack_spa_base() == "https://spa.example.com"
+
+
 def test_oauth_callback_state_is_single_use(api):
     """Replaying a once-used state creates no second connection (nonce consumed)."""
     start = api.call("GET", "/slack/oauth/start")

@@ -423,6 +423,12 @@ module "api_lambda" {
     # Kept in sync with the API Gateway CORS config below.
     ALLOWED_ORIGIN = var.web_allowed_origin
 
+    # Concrete SPA URL the Slack OAuth callback redirects the browser back to.
+    # Distinct from ALLOWED_ORIGIN (a CORS value that may be "*"). Defaults to the
+    # deployed CloudFront URL; override web_app_url when serving the SPA elsewhere
+    # (e.g. http://localhost:5173 against this deployed API).
+    WEB_APP_URL = coalesce(var.web_app_url, "https://${module.static_site.distribution_domain_name}")
+
     # Slack integration (see docs/slack-integration-plan.md). client_secret and
     # state HMAC are NOT here — they live in Secrets Manager (SLACK_SECRET_ARN).
     SLACK_CONNECTIONS_TABLE_NAME = module.slack_connections_table.table_name

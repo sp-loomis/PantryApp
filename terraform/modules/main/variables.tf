@@ -60,6 +60,17 @@ variable "web_allowed_origin" {
   default     = "*"
 }
 
+variable "web_app_url" {
+  description = <<-EOT
+    Concrete SPA base URL the Slack OAuth callback redirects the browser back to
+    (e.g. https://app.example.com or http://localhost:5173). Distinct from
+    web_allowed_origin, which is a CORS value and may be "*". Empty defaults to
+    the deployed CloudFront URL.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "slack_client_id" {
   description = <<-EOT
     Slack app OAuth client_id (public-ish; injected into the Lambda env). The

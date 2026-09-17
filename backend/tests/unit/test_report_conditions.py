@@ -14,7 +14,8 @@ class _FakeServices:
         self._items = items
         self._categories = categories
 
-    def search_items(self, user_id, name=None, location_id=None, tags=None):
+    def search_items(self, user_id, name=None, location_id=None, tags=None, use_by_date_end=None):
+        self.last_end = use_by_date_end
         return self._items
 
     def list_categories(self, user_id):
@@ -124,3 +125,35 @@ def test_validate_rejects_unknown_category_when_ids_supplied():
         validate_trigger(_trigger("below", 10), valid_category_ids={"other"})
     # Passes when the id is known.
     validate_trigger(_trigger("below", 10), valid_category_ids={"c-beef"})
+
+
+def test_validate_accepts_expiry_in_condition_query():
+    t = _trigger("below", 10)
+    t["conditions"][0]["query"] = {"expires_within_days": 7}
+    validate_trigger(t)
+    t["conditions"][0]["query"] = {"use_by_date_end": "2030-01-01"}
+    validate_trigger(t)
+
+
+@pytest.mark.parametrize("query", [
+    {"expires_within_days": 0},
+    {"expires_within_days": -5},
+    {"use_by_date_end": "not-a-date"},
+    {"use_by_date_end": 5},
+])
+def test_validate_rejects_bad_expiry_in_condition_query(query):
+    t = _trigger("below", 10)
+    t["conditions"][0]["query"] = query
+    with pytest.raises(ValueError):
+        validate_trigger(t)
+
+
+def test_condition_passes_resolved_expiry_end():
+    # The condition query's relative span reaches search_items as a resolved bound.
+    from datetime import date, timedelta
+
+    services = _services(5)
+    trigger = _trigger("below", 10)
+    trigger["conditions"][0]["query"] = {"expires_within_days": 3}
+    evaluate_trigger(trigger, "u1", services)
+    assert services.item_service.last_end == (date.today() + timedelta(days=3)).isoformat()

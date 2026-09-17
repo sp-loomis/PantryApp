@@ -1542,6 +1542,51 @@ class MessageService:
         logger.info(f"Deleted message: {message_id} for user: {user_id}")
         return True
 
+    def mark_read_bulk(self, user_id: str, message_ids: List[str]) -> int:
+        """Mark a set of the user's messages read; return how many were updated.
+
+        Applies the same update as :meth:`mark_read` to each id (SET read_at,
+        REMOVE unread_sort). Ids that don't exist for this user are skipped, so
+        the count reflects rows actually updated. DynamoDB has no batch
+        update_item, so this loops.
+        """
+        read_at = _now_iso()
+        updated = 0
+        for message_id in message_ids:
+            existing = self.messages_table.get_item(
+                Key={"user_id": user_id, "message_id": message_id}
+            )
+            if not existing.get("Item"):
+                continue
+            self.messages_table.update_item(
+                Key={"user_id": user_id, "message_id": message_id},
+                UpdateExpression=f"SET read_at = :read_at REMOVE {self.UNREAD_SORT_ATTR}",
+                ExpressionAttributeValues={":read_at": read_at},
+            )
+            updated += 1
+        logger.info(f"Marked {updated} messages read for user: {user_id}")
+        return updated
+
+    def delete_bulk(self, user_id: str, message_ids: List[str]) -> int:
+        """Delete a set of the user's messages; return how many existed.
+
+        Missing ids are skipped (counted only when present). Deletes are issued
+        through a ``batch_writer`` to cut round-trips.
+        """
+        to_delete = [
+            mid
+            for mid in message_ids
+            if self.messages_table.get_item(
+                Key={"user_id": user_id, "message_id": mid}
+            ).get("Item")
+        ]
+        if to_delete:
+            with self.messages_table.batch_writer() as batch:
+                for message_id in to_delete:
+                    batch.delete_item(Key={"user_id": user_id, "message_id": message_id})
+        logger.info(f"Deleted {len(to_delete)} messages for user: {user_id}")
+        return len(to_delete)
+
 
 class ReportGenerator:
     """Renders a report config into a message (the in-app delivery sink).

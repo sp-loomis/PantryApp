@@ -1140,6 +1140,62 @@ def delete_report(report_id: str):
 # routes so it is not swallowed by the parametric matcher.
 # ============================================================================
 
+@app.post("/messages/read-all")
+@tracer.capture_method
+def mark_messages_read_bulk():
+    """Mark a set of messages read (bulk).
+
+    Body: ``{"message_ids": [...]}``. Registered before the parametric
+    /messages/<message_id> routes so the literal path wins.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        message_ids = data.get("message_ids")
+        if not isinstance(message_ids, list) or not all(isinstance(m, str) for m in message_ids):
+            return {"error": "'message_ids' must be a list of strings"}, 400
+        updated = message_service.mark_read_bulk(user_id, message_ids)
+        return {"updated": updated}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error marking messages read in bulk")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/messages")
+@tracer.capture_method
+def delete_messages_bulk():
+    """Delete a set of messages (bulk).
+
+    Body: ``{"message_ids": [...]}``. The bare /messages path is distinct from
+    the parametric /messages/<message_id> delete route.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        message_ids = data.get("message_ids")
+        if not isinstance(message_ids, list) or not all(isinstance(m, str) for m in message_ids):
+            return {"error": "'message_ids' must be a list of strings"}, 400
+        deleted = message_service.delete_bulk(user_id, message_ids)
+        if deleted:
+            metrics.add_metric(name="MessageDeleted", unit="Count", value=deleted)
+        return {"deleted": deleted}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error deleting messages in bulk")
+        return {"error": str(e)}, 500
+
+
 @app.get("/messages/unread")
 @tracer.capture_method
 def list_unread_messages():

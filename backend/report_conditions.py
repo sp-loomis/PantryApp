@@ -11,7 +11,9 @@ Trigger shape (also documented on :class:`models.Report`)::
       "match": "all" | "any",          # join across conditions (default "all")
       "conditions": [
         {
-          "query": { "location_id", "tags", "name" },  # same shape as item_query
+          # same shape as item_query (incl. optional expiry filter)
+          "query": { "location_id", "tags", "name",
+                     "expires_within_days", "use_by_date_end" },
           "match": "all" | "any",       # join across inequalities (default "all")
           "inequalities": [
             { "category_id", "operator": "below"|"above", "threshold": <number> }
@@ -29,6 +31,7 @@ category with no matching items aggregates to 0. An empty/absent trigger passes.
 from typing import Any, Dict, List
 
 from dimensions import aggregate_by_category
+from report_sections import resolve_use_by_end, _validate_expiry
 
 _MATCH_MODES = ("all", "any")
 _OPERATORS = ("below", "above")
@@ -49,6 +52,7 @@ def _condition_aggregates(
         name=query.get("name") or None,
         location_id=query.get("location_id") or None,
         tags=query.get("tags") or None,
+        use_by_date_end=resolve_use_by_end(query),
     )
     categories = services.category_service.list_categories(user_id)
     return {
@@ -124,6 +128,8 @@ def validate_trigger(trigger: Any, valid_category_ids: Any = None) -> None:
         query = cond.get("query")
         if query is not None and not isinstance(query, dict):
             raise ValueError(f"trigger.conditions[{i}].query must be an object")
+        if isinstance(query, dict):
+            _validate_expiry(query, f"trigger.conditions[{i}].query")
 
         inequalities = cond.get("inequalities")
         if inequalities is not None and not isinstance(inequalities, list):

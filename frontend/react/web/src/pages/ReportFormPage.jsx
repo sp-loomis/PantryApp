@@ -42,6 +42,7 @@ import ErrorMessage from '../components/ErrorMessage';
 import LocationSelect from '../components/LocationSelect';
 import ChannelSelect from '../components/ChannelSelect';
 import TriggerBuilder from '../components/TriggerBuilder';
+import ExpiryFilter from '../components/ExpiryFilter';
 import { PlusIcon, TrashIcon } from '../components/icons';
 
 const WEEKDAYS = [
@@ -158,6 +159,20 @@ function SectionConfig({ section, onConfigChange, tagOptions }) {
       </FormControl>
       <TagsFilter config={config} set={set} tagOptions={tagOptions} />
       <NameFilter config={config} set={set} />
+      <FormControl>
+        <FormLabel fontSize="sm">Expiring (optional)</FormLabel>
+        <ExpiryFilter
+          withinDays={config.expires_within_days}
+          dateEnd={config.use_by_date_end}
+          onChange={({ withinDays, dateEnd }) =>
+            onConfigChange({
+              ...config,
+              expires_within_days: withinDays,
+              use_by_date_end: dateEnd,
+            })
+          }
+        />
+      </FormControl>
     </VStack>
   );
 }
@@ -258,6 +273,8 @@ export default function ReportFormPage() {
     if (query.location_id) out.location_id = query.location_id;
     if (query.tags && query.tags.length) out.tags = query.tags;
     if (query.name) out.name = query.name;
+    if (query.expires_within_days) out.expires_within_days = query.expires_within_days;
+    if (query.use_by_date_end) out.use_by_date_end = query.use_by_date_end;
     return out;
   };
 

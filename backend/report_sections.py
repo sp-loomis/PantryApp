@@ -12,9 +12,30 @@ section type is a matter of writing a renderer and registering it in
 rendered content.
 """
 
-from typing import Any, Callable, Dict, List
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 from dimensions import aggregate_by_category
+
+
+def resolve_use_by_end(query: Dict[str, Any], tz: Any = None) -> Optional[str]:
+    """Resolve a query's expiry filter to a date-only ``use_by_date_end`` bound.
+
+    Reports run on a recurring schedule, so the expiry filter is stored
+    *relative* (``expires_within_days``) and recomputed each run: N days from
+    today yields "expiring within N days". A ``custom`` picker instead stores an
+    absolute ``use_by_date_end`` (passed through unchanged). Returns ``None`` when
+    neither is set.
+
+    ``today`` is taken in ``tz`` when one is supplied (the render path has the
+    user's tz); the trigger path has none and falls back to UTC.
+    """
+    within = query.get("expires_within_days")
+    if within is not None and not isinstance(within, bool):
+        today = datetime.now(tz).date() if tz else datetime.now(timezone.utc).date()
+        return (today + timedelta(days=int(within))).isoformat()
+    end = query.get("use_by_date_end")
+    return end or None
 
 
 def _tags(config: Dict[str, Any]) -> List[str]:
@@ -63,6 +84,7 @@ def render_item_query(user_id: str, config: Dict[str, Any], services: Any, tz: A
         name=config.get("name") or None,
         location_id=config.get("location_id") or None,
         tags=_tags(config) or None,
+        use_by_date_end=resolve_use_by_end(config, tz),
     )
     # Roll the matched items up per category (aggregate value across all categories
     # present in the query). Skipped when no category service is wired.
@@ -136,3 +158,25 @@ def validate_sections(sections: Any) -> None:
             location_id = config.get("location_id")
             if location_id is not None and not isinstance(location_id, str):
                 raise ValueError(f"section[{i}] 'location_id' must be a string")
+            _validate_expiry(config, f"section[{i}]")
+
+
+def _validate_expiry(query: Dict[str, Any], where: str) -> None:
+    """Validate a query's optional expiry filter fields, raising ValueError.
+
+    ``expires_within_days`` (relative) must be a positive number; ``use_by_date_end``
+    (absolute) must be an ISO-8601 date string. Shared by section and trigger
+    query validation.
+    """
+    within = query.get("expires_within_days")
+    if within is not None:
+        if isinstance(within, bool) or not isinstance(within, (int, float)) or within <= 0:
+            raise ValueError(f"{where} 'expires_within_days' must be a positive number")
+    end = query.get("use_by_date_end")
+    if end is not None:
+        if not isinstance(end, str):
+            raise ValueError(f"{where} 'use_by_date_end' must be a string")
+        try:
+            datetime.fromisoformat(end)
+        except ValueError:
+            raise ValueError(f"{where} 'use_by_date_end' must be an ISO-8601 date")

@@ -18,7 +18,6 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
-  Select,
   Spinner,
   Text,
   VStack,
@@ -32,24 +31,9 @@ import LocationSelect from '../components/LocationSelect';
 import ItemCard from '../components/ItemCard';
 import EmptyState from '../components/EmptyState';
 import ErrorMessage from '../components/ErrorMessage';
+import ExpiryFilter from '../components/ExpiryFilter';
+import { presetToDate } from '../utils/expiry';
 import { SearchIcon, PlusIcon } from '../components/icons';
-
-// Preset expiry spans (days from today). 'custom' reveals a date picker.
-const EXPIRY_PRESETS = [
-  { value: '3', label: 'Within 3 days' },
-  { value: '7', label: 'Within 1 week' },
-  { value: '14', label: 'Within 2 weeks' },
-  { value: '30', label: 'Within 1 month' },
-  { value: 'custom', label: 'By a date…' },
-];
-
-/** Local YYYY-MM-DD (the backend accepts date-only ISO and rejects a trailing Z). */
-function toLocalYMD(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
 
 export default function SearchPage() {
   const { locationName } = useInventoryContext();
@@ -57,8 +41,7 @@ export default function SearchPage() {
   const [name, setName] = useState('');
   const [locationId, setLocationId] = useState('');
   const [selectedTags, setSelectedTags] = useState([]); // option objects
-  const [expiryPreset, setExpiryPreset] = useState(''); // '' | '3' | ... | 'custom'
-  const [expiryDate, setExpiryDate] = useState(''); // YYYY-MM-DD when custom
+  const [expiry, setExpiry] = useState({}); // { withinDays?, dateEnd? }
 
   const [tagOptions, setTagOptions] = useState([]);
   const [items, setItems] = useState([]);
@@ -72,16 +55,12 @@ export default function SearchPage() {
       .catch(() => setTagOptions([]));
   }, []);
 
-  // Resolve the expiry filter to a date-only upper bound, or null.
+  // Resolve the expiry filter to a date-only upper bound, or null. A relative
+  // span (withinDays) resolves against today; a custom date passes through.
   const expiryEnd = useCallback(() => {
-    if (expiryPreset === 'custom') return expiryDate || null;
-    if (expiryPreset) {
-      const d = new Date();
-      d.setDate(d.getDate() + Number(expiryPreset));
-      return toLocalYMD(d);
-    }
-    return null;
-  }, [expiryPreset, expiryDate]);
+    if (expiry.withinDays) return presetToDate(expiry.withinDays);
+    return expiry.dateEnd || null;
+  }, [expiry]);
 
   const runSearch = useCallback(async () => {
     const criteria = {};
@@ -159,31 +138,13 @@ export default function SearchPage() {
             </Box>
           </WrapItem>
           <WrapItem>
-            <Select
-              value={expiryPreset}
-              onChange={(e) => setExpiryPreset(e.target.value)}
-              placeholder="Any expiry"
+            <ExpiryFilter
+              withinDays={expiry.withinDays}
+              dateEnd={expiry.dateEnd}
+              onChange={setExpiry}
               bg="white"
-              w="170px"
-            >
-              {EXPIRY_PRESETS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </Select>
+            />
           </WrapItem>
-          {expiryPreset === 'custom' && (
-            <WrapItem>
-              <Input
-                type="date"
-                value={expiryDate}
-                onChange={(e) => setExpiryDate(e.target.value)}
-                bg="white"
-                w="170px"
-              />
-            </WrapItem>
-          )}
         </Wrap>
       </VStack>
 

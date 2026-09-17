@@ -44,3 +44,21 @@ export async function markUnread(messageId) {
 export async function deleteMessage(messageId) {
   return api.del(`/messages/${messageId}`);
 }
+
+/**
+ * Mark a set of messages read in one call.
+ * @param {string[]} messageIds
+ * @returns {Promise<{updated: number}>}
+ */
+export async function markAllRead(messageIds) {
+  return api.post('/messages/read-all', { message_ids: messageIds });
+}
+
+/**
+ * Delete a set of messages in one call.
+ * @param {string[]} messageIds
+ * @returns {Promise<{deleted: number}>}
+ */
+export async function deleteMessages(messageIds) {
+  return api.del('/messages', { body: { message_ids: messageIds } });
+}

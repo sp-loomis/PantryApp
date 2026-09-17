@@ -6,25 +6,44 @@
  * scrolls the matching message into view, highlights it, and marks it read.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   Badge,
   Box,
+  Button,
   Center,
   Flex,
   Heading,
   HStack,
   IconButton,
+  Select,
   Spinner,
   Text,
+  useDisclosure,
   VStack,
+  Wrap,
+  WrapItem,
 } from '@chakra-ui/react';
-import { listMessages, markRead, markUnread, deleteMessage } from '@pantry-app/shared';
+import {
+  listMessages,
+  markRead,
+  markUnread,
+  deleteMessage,
+  markAllRead,
+  deleteMessages,
+} from '@pantry-app/shared';
 import MessageSections from '../components/MessageSections';
 import EmptyState from '../components/EmptyState';
 import ErrorMessage from '../components/ErrorMessage';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { TrashIcon } from '../components/icons';
+
+const FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'unread', label: 'Unread' },
+  { value: 'read', label: 'Read' },
+];
 
 function formatWhen(iso) {
   if (!iso) return '';
@@ -41,7 +60,17 @@ export default function MessageLogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [highlightId, setHighlightId] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [bulkBusy, setBulkBusy] = useState(false);
   const scrolledTo = useRef(null);
+  const confirmDelete = useDisclosure();
+
+  // The set currently shown; bulk actions operate on exactly this view.
+  const visible = useMemo(() => {
+    if (filter === 'unread') return messages.filter((m) => !m.read_at);
+    if (filter === 'read') return messages.filter((m) => m.read_at);
+    return messages;
+  }, [messages, filter]);
 
   const load = useCallback(async () => {
     try {
@@ -98,11 +127,83 @@ export default function MessageLogPage() {
     }
   };
 
+  // Bulk actions target the currently filtered view only.
+  const unreadInView = visible.filter((m) => !m.read_at);
+
+  const handleMarkAllRead = async () => {
+    if (unreadInView.length === 0) return;
+    try {
+      setBulkBusy(true);
+      await markAllRead(unreadInView.map((m) => m.message_id));
+      await load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    try {
+      setBulkBusy(true);
+      await deleteMessages(visible.map((m) => m.message_id));
+      confirmDelete.onClose();
+      await load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const filterLabel = FILTERS.find((f) => f.value === filter)?.label.toLowerCase();
+
   return (
     <Box>
       <Text fontSize="2xl" fontWeight="bold" mb={4}>
         Messages
       </Text>
+
+      {messages.length > 0 && (
+        <Wrap spacing={3} align="center" mb={4}>
+          <WrapItem>
+            <Select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              bg="white"
+              w="150px"
+              size="sm"
+            >
+              {FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </Select>
+          </WrapItem>
+          <WrapItem>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleMarkAllRead}
+              isDisabled={unreadInView.length === 0 || bulkBusy}
+            >
+              Mark all read
+            </Button>
+          </WrapItem>
+          <WrapItem>
+            <Button
+              size="sm"
+              variant="outline"
+              colorScheme="red"
+              onClick={confirmDelete.onOpen}
+              isDisabled={visible.length === 0 || bulkBusy}
+            >
+              Delete all
+            </Button>
+          </WrapItem>
+        </Wrap>
+      )}
 
       <ErrorMessage error={error} />
 
@@ -115,9 +216,14 @@ export default function MessageLogPage() {
           title="No messages yet"
           description="Reports you run or schedule will show up here."
         />
+      ) : visible.length === 0 ? (
+        <EmptyState
+          title={`No ${filterLabel} messages`}
+          description="Try a different filter."
+        />
       ) : (
         <VStack spacing={4} align="stretch">
-          {messages.map((message) => {
+          {visible.map((message) => {
             const unread = !message.read_at;
             const highlighted = message.message_id === highlightId;
             return (
@@ -167,6 +273,22 @@ export default function MessageLogPage() {
           })}
         </VStack>
       )}
+
+      <ConfirmDialog
+        isOpen={confirmDelete.isOpen}
+        onClose={confirmDelete.onClose}
+        onConfirm={handleDeleteAll}
+        isLoading={bulkBusy}
+        title="Delete messages"
+        body={
+          filter === 'all'
+            ? `Delete all ${visible.length} messages? This can't be undone.`
+            : `Delete the ${visible.length} ${filterLabel} ${
+                visible.length === 1 ? 'message' : 'messages'
+              } shown? This can't be undone.`
+        }
+        confirmLabel="Delete all"
+      />
     </Box>
   );
 }

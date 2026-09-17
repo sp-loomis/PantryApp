@@ -1,8 +1,15 @@
 """Unit tests for the report section renderer registry."""
 
+from datetime import date, timedelta
+
 import pytest
 
-from report_sections import render_section, validate_sections, SECTION_TYPES
+from report_sections import (
+    render_section,
+    validate_sections,
+    resolve_use_by_end,
+    SECTION_TYPES,
+)
 
 
 class _FakeServices:
@@ -22,8 +29,11 @@ class _FakeServices:
         }
         return self._tasks
 
-    def search_items(self, user_id, name=None, location_id=None, tags=None):
-        self.last_item_query = {"name": name, "location_id": location_id, "tags": tags}
+    def search_items(self, user_id, name=None, location_id=None, tags=None, use_by_date_end=None):
+        self.last_item_query = {
+            "name": name, "location_id": location_id, "tags": tags,
+            "use_by_date_end": use_by_date_end,
+        }
         return self._items
 
     def list_categories(self, user_id):
@@ -67,7 +77,9 @@ def test_item_query_routes_through_search_items():
     assert result["content"] == {
         "items": [{"name": "milk"}], "count": 1, "category_totals": [],
     }
-    assert services.last_item_query == {"name": "mil", "location_id": "loc-1", "tags": ["dairy"]}
+    assert services.last_item_query == {
+        "name": "mil", "location_id": "loc-1", "tags": ["dairy"], "use_by_date_end": None,
+    }
 
 
 def test_item_query_includes_category_totals():
@@ -95,7 +107,36 @@ def test_item_query_empty_filters_pass_none():
     # No filters -> search_items called with all None.
     s = _FakeServices()
     render_section({"type": "item_query", "config": {}}, "u1", s)
-    assert s.last_item_query == {"name": None, "location_id": None, "tags": None}
+    assert s.last_item_query == {
+        "name": None, "location_id": None, "tags": None, "use_by_date_end": None,
+    }
+
+
+def test_item_query_passes_resolved_expiry_end():
+    # A relative span resolves to an absolute date-only bound at render time.
+    s = _FakeServices()
+    render_section({"type": "item_query", "config": {"expires_within_days": 7}}, "u1", s)
+    assert s.last_item_query["use_by_date_end"] == (date.today() + timedelta(days=7)).isoformat()
+
+
+def test_item_query_passes_absolute_expiry_end():
+    s = _FakeServices()
+    render_section(
+        {"type": "item_query", "config": {"use_by_date_end": "2030-01-01"}}, "u1", s
+    )
+    assert s.last_item_query["use_by_date_end"] == "2030-01-01"
+
+
+def test_resolve_use_by_end():
+    assert resolve_use_by_end({}) is None
+    assert resolve_use_by_end({"use_by_date_end": "2030-01-01"}) == "2030-01-01"
+    assert resolve_use_by_end({"expires_within_days": 3}) == (
+        date.today() + timedelta(days=3)
+    ).isoformat()
+    # A relative span wins over an absolute date if both are present.
+    assert resolve_use_by_end({"expires_within_days": 1, "use_by_date_end": "2030-01-01"}) == (
+        date.today() + timedelta(days=1)
+    ).isoformat()
 
 
 def test_unknown_section_type_raises():
@@ -108,6 +149,8 @@ def test_validate_sections_accepts_valid():
         {"type": "custom_message", "config": {"text": "hi"}},
         {"type": "task_query", "config": {"status": "active", "tags": ["a", "b"], "name": "clean"}},
         {"type": "item_query", "config": {"location_id": "loc-1", "tags": ["dairy"]}},
+        {"type": "item_query", "config": {"expires_within_days": 7}},
+        {"type": "item_query", "config": {"use_by_date_end": "2030-01-01"}},
     ])
 
 
@@ -121,6 +164,11 @@ def test_validate_sections_accepts_valid():
     [{"type": "task_query", "config": {"tags": [1, 2]}}],
     [{"type": "item_query", "config": {"name": 5}}],
     [{"type": "item_query", "config": {"location_id": 5}}],
+    [{"type": "item_query", "config": {"expires_within_days": 0}}],
+    [{"type": "item_query", "config": {"expires_within_days": -1}}],
+    [{"type": "item_query", "config": {"expires_within_days": True}}],
+    [{"type": "item_query", "config": {"use_by_date_end": 5}}],
+    [{"type": "item_query", "config": {"use_by_date_end": "not-a-date"}}],
 ])
 def test_validate_sections_rejects_bad(bad):
     with pytest.raises(ValueError):

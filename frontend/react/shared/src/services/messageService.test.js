@@ -12,8 +12,16 @@ vi.mock('./apiClient.js', () => ({
   },
 }));
 
-const { listMessages, listUnread, getMessage, markRead, markUnread, deleteMessage } =
-  await import('./messageService.js');
+const {
+  listMessages,
+  listUnread,
+  getMessage,
+  markRead,
+  markUnread,
+  deleteMessage,
+  markAllRead,
+  deleteMessages,
+} = await import('./messageService.js');
 
 beforeEach(() => {
   get.mockReset();
@@ -67,5 +75,25 @@ describe('deleteMessage', () => {
     del.mockResolvedValue({ message: 'deleted' });
     await deleteMessage('m1');
     expect(del.mock.calls[0][0]).toBe('/messages/m1');
+  });
+});
+
+describe('markAllRead', () => {
+  it('posts the id list to the bulk read endpoint', async () => {
+    post.mockResolvedValue({ updated: 2 });
+    const result = await markAllRead(['m1', 'm2']);
+    expect(result).toEqual({ updated: 2 });
+    expect(post.mock.calls[0][0]).toBe('/messages/read-all');
+    expect(post.mock.calls[0][1]).toEqual({ message_ids: ['m1', 'm2'] });
+  });
+});
+
+describe('deleteMessages', () => {
+  it('sends the id list as the delete body', async () => {
+    del.mockResolvedValue({ deleted: 2 });
+    const result = await deleteMessages(['m1', 'm2']);
+    expect(result).toEqual({ deleted: 2 });
+    expect(del.mock.calls[0][0]).toBe('/messages');
+    expect(del.mock.calls[0][1]).toEqual({ body: { message_ids: ['m1', 'm2'] } });
   });
 });

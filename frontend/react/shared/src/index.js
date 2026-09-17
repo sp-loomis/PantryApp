@@ -67,7 +67,9 @@ export {
   getMessage,
   markRead,
   markUnread,
-  deleteMessage
+  deleteMessage,
+  markAllRead,
+  deleteMessages
 } from './services/messageService.js';
 export {
   getAuthorizeUrl,

@@ -32,6 +32,7 @@ import {
 import { Select as MultiSelect } from 'chakra-react-select';
 import { listCategories } from '@pantry-app/shared';
 import LocationSelect from './LocationSelect';
+import ExpiryFilter from './ExpiryFilter';
 import { PlusIcon, TrashIcon } from './icons';
 
 const MATCH_OPTIONS = [
@@ -182,6 +183,22 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
                       })
                     }
                     placeholder="Partial name match"
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontSize="sm">Expiring (optional)</FormLabel>
+                  <ExpiryFilter
+                    withinDays={cond.query?.expires_within_days}
+                    dateEnd={cond.query?.use_by_date_end}
+                    onChange={({ withinDays, dateEnd }) =>
+                      updateCondition(ci, {
+                        query: {
+                          ...cond.query,
+                          expires_within_days: withinDays,
+                          use_by_date_end: dateEnd,
+                        },
+                      })
+                    }
                   />
                 </FormControl>
               </VStack>

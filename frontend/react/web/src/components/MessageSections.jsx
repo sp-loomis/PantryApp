@@ -7,13 +7,31 @@
  * fall back to a JSON dump so nothing is silently dropped.
  */
 
-import { Box, Heading, List, ListItem, Text } from '@chakra-ui/react';
+import { Box, Heading, Link, Table, Tbody, Td, Text, Tr } from '@chakra-ui/react';
+import { Link as RouterLink } from 'react-router-dom';
+
+import { formatDate } from '../utils/dates';
+
+// Mirrors backend STATUS_EMOJI (slack_blocks.py) so task rows read the same in
+// both the message log and Slack.
+const STATUS_EMOJI = {
+  overdue: '⚠️',
+  due_today: '📅',
+  due_soon: '🕐',
+  done: '✅',
+};
+const DEFAULT_BULLET = '•';
 
 function TextContent({ content }) {
   return <Text whiteSpace="pre-wrap">{content?.text || ''}</Text>;
 }
 
-function ItemsContent({ content, emptyLabel }) {
+/**
+ * Task/item sections render as a two-column table: name (deep link) + due date,
+ * with a leading status-emoji column. `isTask` picks the id, route, date field,
+ * emoji, and date label for the row.
+ */
+function ItemsTable({ content, emptyLabel, isTask }) {
   const items = content?.items || [];
   if (items.length === 0) {
     return (
@@ -23,13 +41,33 @@ function ItemsContent({ content, emptyLabel }) {
     );
   }
   return (
-    <List spacing={1}>
-      {items.map((item) => (
-        <ListItem key={item.task_id || item.item_id} fontSize="sm">
-          • {item.name}
-        </ListItem>
-      ))}
-    </List>
+    <Table size="sm" variant="unstyled">
+      <Tbody>
+        {items.map((item) => {
+          const id = isTask ? item.task_id : item.item_id;
+          const to = isTask ? `/tasks/${id}` : `/items/${id}`;
+          const emoji = isTask
+            ? STATUS_EMOJI[item.computed_status] || DEFAULT_BULLET
+            : DEFAULT_BULLET;
+          const due = formatDate(isTask ? item.current_due : item.use_by_date);
+          return (
+            <Tr key={id} fontSize="sm">
+              <Td px={0} py={1} width="1.5em" verticalAlign="top">
+                {emoji}
+              </Td>
+              <Td px={2} py={1} verticalAlign="top">
+                <Link as={RouterLink} to={to} color="brand.500">
+                  {item.name}
+                </Link>
+              </Td>
+              <Td px={0} py={1} color="gray.500" verticalAlign="top" whiteSpace="nowrap">
+                {due}
+              </Td>
+            </Tr>
+          );
+        })}
+      </Tbody>
+    </Table>
   );
 }
 
@@ -38,9 +76,9 @@ function SectionBody({ section }) {
     case 'custom_message':
       return <TextContent content={section.content} />;
     case 'task_query':
-      return <ItemsContent content={section.content} emptyLabel="No matching tasks." />;
+      return <ItemsTable content={section.content} emptyLabel="No matching tasks." isTask />;
     case 'item_query':
-      return <ItemsContent content={section.content} emptyLabel="No matching items." />;
+      return <ItemsTable content={section.content} emptyLabel="No matching items." isTask={false} />;
     default:
       return (
         <Text as="pre" fontSize="xs" color="gray.500" overflowX="auto">

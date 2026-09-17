@@ -15,11 +15,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # Slack hard limits: a message carries at most 50 blocks, header plain_text is
-# 150 chars, a section mrkdwn field is 3000 chars. We stay well under these and
-# truncate defensively rather than letting Slack reject the whole post.
+# 150 chars, a section mrkdwn text is 3000 chars, and each field in a section's
+# ``fields`` array is 2000 chars with at most 10 fields per block. We stay well
+# under these and truncate defensively rather than letting Slack reject the post.
 MAX_BLOCKS = 50
 HEADER_MAX = 150
 SECTION_TEXT_MAX = 3000
+FIELD_TEXT_MAX = 2000
+# A section's ``fields`` render as a 2-column grid; 10 fields = 5 two-column rows.
+FIELDS_PER_BLOCK = 10
 # Cap how many item/task names we list per query section (keeps blocks readable
 # and the message under the block/char limits).
 LIST_ITEMS_MAX = 20
@@ -74,6 +78,14 @@ def _section(text: str) -> Dict[str, Any]:
     return {"type": "section", "text": {"type": "mrkdwn", "text": _truncate(text, SECTION_TEXT_MAX)}}
 
 
+def _field(text: str) -> Dict[str, Any]:
+    return {"type": "mrkdwn", "text": _truncate(text, FIELD_TEXT_MAX)}
+
+
+def _fields_section(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {"type": "section", "fields": fields}
+
+
 def _context(text: str) -> Dict[str, Any]:
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": _truncate(text, SECTION_TEXT_MAX)}]}
 
@@ -90,27 +102,32 @@ def _link(name: str, path: Optional[str], app_base_url: str) -> str:
     return label
 
 
-def _entry_lines(section: Dict[str, Any], app_base_url: str) -> List[str]:
-    """One bullet line per task/item, with a link and (when present) a deadline."""
+def _entry_fields(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, Any]]:
+    """Two mrkdwn fields per task/item — a name column (emoji + link) and a date
+    column — laid out by Slack as a 2-column grid.
+
+    The em dash marks a missing deadline so both columns stay aligned.
+    """
     content = section.get("content") or {}
     section_type = section.get("type")
     items = content.get("items") or []
-    lines: List[str] = []
+    fields: List[Dict[str, Any]] = []
 
     for it in items[:LIST_ITEMS_MAX]:
         if section_type == "task_query":
             emoji = STATUS_EMOJI.get(it.get("computed_status"), DEFAULT_BULLET)
             link = _link(it.get("name"), f"/tasks/{it.get('task_id')}", app_base_url)
             when = _slack_date(it.get("current_due"))
-            suffix = f" — due {when}" if when else ""
+            date_text = f"due {when}" if when else "—"
         else:  # item_query
             emoji = DEFAULT_BULLET
             link = _link(it.get("name"), f"/items/{it.get('item_id')}", app_base_url)
             when = _slack_date(it.get("use_by_date"))
-            suffix = f" — use by {when}" if when else ""
-        lines.append(f"{emoji} {link}{suffix}")
+            date_text = f"use by {when}" if when else "—"
+        fields.append(_field(f"{emoji} {link}"))
+        fields.append(_field(date_text))
 
-    return lines
+    return fields
 
 
 def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, Any]]:
@@ -135,8 +152,11 @@ def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[D
         if not (content.get("items") or []):
             blocks.append(_context(f"_No {noun}s_"))
             return blocks
-        lines = _entry_lines(section, app_base_url)
-        blocks.append(_section("\n".join(lines)))
+        fields = _entry_fields(section, app_base_url)
+        # A section block holds at most 10 fields; split longer lists across
+        # consecutive section blocks so the 2-column grid keeps flowing.
+        for start in range(0, len(fields), FIELDS_PER_BLOCK):
+            blocks.append(_fields_section(fields[start : start + FIELDS_PER_BLOCK]))
         more = count - LIST_ITEMS_MAX
         summary = f"{count} {noun}{'' if count == 1 else 's'}"
         if more > 0:

@@ -18,6 +18,8 @@ import SearchPage from './pages/SearchPage';
 import LocationsPage from './pages/LocationsPage';
 import LocationDetailPage from './pages/LocationDetailPage';
 import LocationFormPage from './pages/LocationFormPage';
+import CategoriesPage from './pages/CategoriesPage';
+import CategoryFormPage from './pages/CategoryFormPage';
 import ItemDetailPage from './pages/ItemDetailPage';
 import ItemFormPage from './pages/ItemFormPage';
 import TagsPage from './pages/TagsPage';
@@ -61,6 +63,9 @@ function App() {
               <Route path="/locations/new" element={<LocationFormPage />} />
               <Route path="/locations/:locationId" element={<LocationDetailPage />} />
               <Route path="/locations/:locationId/edit" element={<LocationFormPage />} />
+              <Route path="/categories" element={<CategoriesPage />} />
+              <Route path="/categories/new" element={<CategoryFormPage />} />
+              <Route path="/categories/:categoryId/edit" element={<CategoryFormPage />} />
               <Route path="/items/new" element={<ItemFormPage />} />
               <Route path="/items/:itemId" element={<ItemDetailPage />} />
               <Route path="/items/:itemId/edit" element={<ItemFormPage />} />

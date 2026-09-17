@@ -17,6 +17,7 @@ from botocore.exceptions import ClientError
 # (``*_TABLE_NAME``) before ``app`` is imported so the Lambda code binds to them.
 ITEMS_TABLE = "pantry-local-items"
 LOCATIONS_TABLE = "pantry-local-locations"
+CATEGORIES_TABLE = "pantry-local-categories"
 ITEM_TAGS_TABLE = "pantry-local-item-tags"
 TASKS_TABLE = "pantry-local-tasks"
 REPORTS_TABLE = "pantry-local-reports"
@@ -27,6 +28,7 @@ SLACK_NONCES_TABLE = "pantry-local-slack-nonces"
 TABLE_NAMES = {
     "ITEMS_TABLE_NAME": ITEMS_TABLE,
     "LOCATIONS_TABLE_NAME": LOCATIONS_TABLE,
+    "CATEGORIES_TABLE_NAME": CATEGORIES_TABLE,
     "ITEM_TAGS_TABLE_NAME": ITEM_TAGS_TABLE,
     "TASKS_TABLE_NAME": TASKS_TABLE,
     "REPORTS_TABLE_NAME": REPORTS_TABLE,
@@ -76,10 +78,25 @@ def create_tables(dynamodb) -> None:
             {"AttributeName": "item_id", "AttributeType": "S"},
             {"AttributeName": "location_id", "AttributeType": "S"},
             {"AttributeName": "use_by_date", "AttributeType": "S"},
+            {"AttributeName": "category_id", "AttributeType": "S"},
         ],
         GlobalSecondaryIndexes=[
             _gsi("LocationIndex", "user_id", "location_id"),
             _gsi("UseByDateIndex", "user_id", "use_by_date"),
+            _gsi("CategoryIndex", "user_id", "category_id"),
+        ],
+    )
+    _create(
+        dynamodb,
+        TableName=CATEGORIES_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "category_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "category_id", "AttributeType": "S"},
         ],
     )
     _create(

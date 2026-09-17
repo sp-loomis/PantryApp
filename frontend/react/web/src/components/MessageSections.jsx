@@ -7,10 +7,37 @@
  * fall back to a JSON dump so nothing is silently dropped.
  */
 
-import { Box, Heading, Link, Table, Tbody, Td, Text, Tr } from '@chakra-ui/react';
+import { Box, Heading, Link, Table, Tbody, Td, Text, Tr, Wrap, WrapItem } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { formatDate } from '../utils/dates';
+
+/** Trim trailing zeros off an aggregate value for display (mirrors slack_blocks). */
+function formatTotal(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return String(value);
+  return Number(num.toFixed(2)).toString();
+}
+
+/**
+ * Per-category aggregate rollup shown under an item_query table. Mirrors the
+ * Slack `📊` context line so the message log and Slack read the same.
+ */
+function CategoryTotals({ totals }) {
+  if (!totals || totals.length === 0) return null;
+  return (
+    <Wrap mt={2} spacing={3} fontSize="sm">
+      {totals.map((t) => (
+        <WrapItem key={t.category_id} color="gray.600">
+          📊 <Text as="span" fontWeight="semibold" ml={1}>{t.name}</Text>
+          <Text as="span" ml={1}>
+            {formatTotal(t.value)} {t.unit}
+          </Text>
+        </WrapItem>
+      ))}
+    </Wrap>
+  );
+}
 
 // Mirrors backend STATUS_EMOJI (slack_blocks.py) so task rows read the same in
 // both the message log and Slack.
@@ -78,7 +105,12 @@ function SectionBody({ section }) {
     case 'task_query':
       return <ItemsTable content={section.content} emptyLabel="No matching tasks." isTask />;
     case 'item_query':
-      return <ItemsTable content={section.content} emptyLabel="No matching items." isTask={false} />;
+      return (
+        <>
+          <ItemsTable content={section.content} emptyLabel="No matching items." isTask={false} />
+          <CategoryTotals totals={section.content?.category_totals} />
+        </>
+      );
     default:
       return (
         <Text as="pre" fontSize="xs" color="gray.500" overflowX="auto">

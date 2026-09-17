@@ -41,6 +41,7 @@ import PageHeader from '../components/PageHeader';
 import ErrorMessage from '../components/ErrorMessage';
 import DimensionField from '../components/DimensionField';
 import LocationSelect from '../components/LocationSelect';
+import CategorySelect from '../components/CategorySelect';
 import TagInput from '../components/TagInput';
 
 export default function ItemFormPage() {
@@ -54,6 +55,7 @@ export default function ItemFormPage() {
   const [name, setName] = useState('');
   const [locationId, setLocationId] = useState(searchParams.get('location') || '');
   const [measure, setMeasure] = useState({ ...EMPTY_MEASURE });
+  const [categoryId, setCategoryId] = useState('');
   const [useByDate, setUseByDate] = useState('');
   const [tags, setTags] = useState([]);
   const [notes, setNotes] = useState('');
@@ -73,6 +75,7 @@ export default function ItemFormPage() {
       setName(item.name);
       setLocationId(item.location_id);
       setMeasure(dimensionsToMeasure(item.dimensions));
+      setCategoryId(item.category_id || '');
       setUseByDate(item.use_by_date ? item.use_by_date.slice(0, 10) : '');
       setTags(item.tags || []);
       setNotes(item.notes || '');
@@ -106,6 +109,7 @@ export default function ItemFormPage() {
       name: name.trim(),
       location_id: locationId,
       dimensions: measureToDimensions(measure),
+      category_id: categoryId || null,
       use_by_date: useByDate || null,
       tags,
       notes,
@@ -196,6 +200,18 @@ export default function ItemFormPage() {
           </FormControl>
 
           <DimensionField value={measure} onChange={setMeasure} error={fieldErrors.measure} />
+
+          <FormControl>
+            <FormLabel>Category</FormLabel>
+            <CategorySelect
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              measureType={measure.type}
+            />
+            <FormHelperText>
+              Weight/volume categories need a matching measure; count categories fit any item.
+            </FormHelperText>
+          </FormControl>
 
           <FormControl>
             <FormLabel>Use-by date</FormLabel>

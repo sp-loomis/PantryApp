@@ -8,6 +8,11 @@ output "locations_table_name" {
   value       = module.locations_table.table_name
 }
 
+output "categories_table_name" {
+  description = "Name of the categories DynamoDB table"
+  value       = module.categories_table.table_name
+}
+
 output "item_tags_table_name" {
   description = "Name of the item tags DynamoDB table"
   value       = module.item_tags_table.table_name

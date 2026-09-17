@@ -33,6 +33,10 @@ module "items_table" {
     {
       name = "use_by_date"
       type = "S"
+    },
+    {
+      name = "category_id"
+      type = "S"
     }
   ]
 
@@ -48,6 +52,36 @@ module "items_table" {
       hash_key        = "user_id"
       range_key       = "use_by_date"
       projection_type = "ALL"
+    },
+    {
+      name            = "CategoryIndex"
+      hash_key        = "user_id"
+      range_key       = "category_id"
+      projection_type = "ALL"
+    }
+  ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
+# DynamoDB table for item categories (user-scoped)
+module "categories_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-categories"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "category_id"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "category_id"
+      type = "S"
     }
   ]
 
@@ -333,6 +367,7 @@ data "aws_iam_policy_document" "lambda_dynamodb_policy" {
       module.items_table.table_arn,
       "${module.items_table.table_arn}/index/*",
       module.locations_table.table_arn,
+      module.categories_table.table_arn,
       module.item_tags_table.table_arn,
       "${module.item_tags_table.table_arn}/index/*",
       module.tasks_table.table_arn,
@@ -410,9 +445,10 @@ module "api_lambda" {
   ]
 
   environment_variables = {
-    ITEMS_TABLE_NAME     = module.items_table.table_name
-    LOCATIONS_TABLE_NAME = module.locations_table.table_name
-    ITEM_TAGS_TABLE_NAME = module.item_tags_table.table_name
+    ITEMS_TABLE_NAME      = module.items_table.table_name
+    LOCATIONS_TABLE_NAME  = module.locations_table.table_name
+    CATEGORIES_TABLE_NAME = module.categories_table.table_name
+    ITEM_TAGS_TABLE_NAME  = module.item_tags_table.table_name
     TASKS_TABLE_NAME     = module.tasks_table.table_name
     REPORTS_TABLE_NAME   = module.reports_table.table_name
     MESSAGES_TABLE_NAME  = module.messages_table.table_name

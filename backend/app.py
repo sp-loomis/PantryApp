@@ -16,9 +16,11 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig, Response
 
 from services import (
-    ItemService, LocationService, TagService, TaskService,
+    ItemService, LocationService, CategoryService, TagService, TaskService,
     ReportService, MessageService, ReportGenerator, SlackService,
 )
+from report_conditions import evaluate_trigger
+from dimensions import DimensionType, WeightUnit, VolumeUnit
 from auth import get_effective_user_id, AuthenticationError
 
 # Initialize Powertools utilities
@@ -42,6 +44,7 @@ dynamodb = boto3.resource('dynamodb')
 # Get table names from environment variables
 ITEMS_TABLE = os.environ.get('ITEMS_TABLE_NAME')
 LOCATIONS_TABLE = os.environ.get('LOCATIONS_TABLE_NAME')
+CATEGORIES_TABLE = os.environ.get('CATEGORIES_TABLE_NAME')
 ITEM_TAGS_TABLE = os.environ.get('ITEM_TAGS_TABLE_NAME')
 TASKS_TABLE = os.environ.get('TASKS_TABLE_NAME')
 REPORTS_TABLE = os.environ.get('REPORTS_TABLE_NAME')
@@ -76,11 +79,19 @@ def _slack_spa_base() -> str:
     return base.rstrip('/')
 
 # Initialize services
-item_service = ItemService(dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE))
 location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
+# CategoryService holds the items table too, to clear category_id off items when a
+# category is deleted (via the CategoryIndex GSI).
+category_service = CategoryService(
+    dynamodb.Table(CATEGORIES_TABLE) if CATEGORIES_TABLE else None,
+    dynamodb.Table(ITEMS_TABLE),
+)
+item_service = ItemService(
+    dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE), category_service
+)
 tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
 task_service = TaskService(dynamodb.Table(TASKS_TABLE))
-report_service = ReportService(dynamodb.Table(REPORTS_TABLE))
+report_service = ReportService(dynamodb.Table(REPORTS_TABLE), category_service)
 message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
 
 # KMS/Secrets clients are lazy (boto3 resolves creds on first call), so building
@@ -102,6 +113,7 @@ slack_service = SlackService(
 # destination (best-effort; in-app message log is always written).
 report_generator = ReportGenerator(
     report_service, message_service, task_service, item_service,
+    category_service=category_service,
     slack_service=slack_service,
     app_base_url=WEB_APP_URL,
 )
@@ -244,6 +256,158 @@ def delete_location(location_id: str):
 
 
 # ============================================================================
+# Category Endpoints
+#
+# NOTE: Route registration order matters (see Item Endpoints note). The static
+# /categories/units path MUST be registered before /categories/<category_id>.
+# ============================================================================
+
+@app.post("/categories")
+@tracer.capture_method
+def create_category():
+    """Create a new item category."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        missing = [f for f in ("name", "measure_type") if not data.get(f)]
+        if missing:
+            return {"error": f"Missing required field(s): {', '.join(missing)}"}, 400
+
+        category = category_service.create_category(
+            user_id=user_id,
+            name=data['name'],
+            measure_type=data['measure_type'],
+            preferred_unit=data.get('preferred_unit'),
+            description=data.get('description', ''),
+        )
+        metrics.add_metric(name="CategoryCreated", unit="Count", value=1)
+        return {"category": category}, 201
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error creating category: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error creating category")
+        metrics.add_metric(name="CategoryCreationError", unit="Count", value=1)
+        return {"error": str(e)}, 500
+
+
+@app.get("/categories")
+@tracer.capture_method
+def list_categories():
+    """List all categories for the authenticated user."""
+    try:
+        user_id = _current_user_id()
+        categories = category_service.list_categories(user_id)
+        return {"categories": categories}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing categories")
+        return {"error": str(e)}, 500
+
+
+@app.get("/categories/units")
+@tracer.capture_method
+def list_measure_units():
+    """List the valid units per measure type (drives category form selects)."""
+    try:
+        _current_user_id()  # authenticate; the catalog itself is static
+        return {"units": {
+            DimensionType.COUNT.value: [],
+            DimensionType.WEIGHT.value: [u.value for u in WeightUnit],
+            DimensionType.VOLUME.value: [u.value for u in VolumeUnit],
+        }}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing measure units")
+        return {"error": str(e)}, 500
+
+
+@app.get("/categories/<category_id>")
+@tracer.capture_method
+def get_category(category_id: str):
+    """Get a specific category."""
+    try:
+        user_id = _current_user_id()
+        category = category_service.get_category(user_id, category_id)
+        if not category:
+            return {"error": "Category not found"}, 404
+        return {"category": category}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error getting category")
+        return {"error": str(e)}, 500
+
+
+@app.put("/categories/<category_id>")
+@tracer.capture_method
+def update_category(category_id: str):
+    """Update a category."""
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        category = category_service.update_category(user_id, category_id, data)
+        if not category:
+            return {"error": "Category not found"}, 404
+        metrics.add_metric(name="CategoryUpdated", unit="Count", value=1)
+        return {"category": category}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error updating category: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error updating category")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/categories/<category_id>")
+@tracer.capture_method
+def delete_category(category_id: str):
+    """Delete a category (clears it off any items that reference it)."""
+    try:
+        user_id = _current_user_id()
+        success = category_service.delete_category(user_id, category_id)
+        if not success:
+            return {"error": "Category not found"}, 404
+        metrics.add_metric(name="CategoryDeleted", unit="Count", value=1)
+        return {"message": "Category deleted successfully"}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error deleting category")
+        return {"error": str(e)}, 500
+
+
+# ============================================================================
 # Item Endpoints
 #
 # NOTE: Route registration order matters. Powertools matches the first route
@@ -278,6 +442,7 @@ def create_item():
             dimensions=data.get('dimensions', []),
             use_by_date=data.get('use_by_date'),
             tags=tags,
+            category_id=data.get('category_id'),
             notes=data.get('notes', ''),
             copies=copies
         )
@@ -837,6 +1002,7 @@ def create_report():
             sections=data.get('sections', []),
             enabled=data.get('enabled', True),
             delivery=data.get('delivery'),
+            trigger=data.get('trigger'),
         )
         metrics.add_metric(name="ReportCreated", unit="Count", value=1)
         return {"report": report}, 201
@@ -1112,10 +1278,20 @@ def run_report_sweep(now=None) -> Dict[str, Any]:
     """
     due = report_service.list_due_reports(now)
     generated = 0
+    skipped = 0
     failed = 0
     for report in due:
         try:
             tz = (report.get("schedule") or {}).get("tz")
+            # A report with a trigger only generates when the trigger passes
+            # against live data. Either way next_run advances so the schedule keeps
+            # acting as the check cadence.
+            if not evaluate_trigger(report.get("trigger") or {}, report["user_id"], report_generator):
+                report_service.mark_run(
+                    report["user_id"], report["report_id"], report.get("schedule", {}), now
+                )
+                skipped += 1
+                continue
             report_generator.generate(report, tz=tz, now=now)
             generated += 1
         except Exception:
@@ -1124,9 +1300,12 @@ def run_report_sweep(now=None) -> Dict[str, Any]:
                 f"Failed to generate report {report.get('report_id')} "
                 f"for user {report.get('user_id')}"
             )
-    logger.info(f"Report sweep complete: {generated} generated, {failed} failed")
+    logger.info(
+        f"Report sweep complete: {generated} generated, {skipped} skipped "
+        f"(trigger not met), {failed} failed"
+    )
     metrics.add_metric(name="ReportsGenerated", unit="Count", value=generated)
-    return {"generated": generated, "failed": failed, "due": len(due)}
+    return {"generated": generated, "skipped": skipped, "failed": failed, "due": len(due)}
 
 
 # ============================================================================

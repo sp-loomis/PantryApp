@@ -28,6 +28,7 @@ import {
   RiAddCircleLine,
   RiCalendarTodoLine,
   RiMegaphoneLine,
+  RiStackLine,
 } from 'react-icons/ri';
 
 export const SearchIcon = (props) => <Icon as={RiSearch2Line} {...props} />;
@@ -43,5 +44,6 @@ export const ClockIcon = (props) => <Icon as={FiClock} {...props} />;
 export const BellIcon = (props) => <Icon as={FiBell} {...props} />;
 export const RunIcon = (props) => <Icon as={FiPlay} {...props} />;
 export const ReportIcon = (props) => <Icon as={RiMegaphoneLine} {...props} />;
+export const CategoryIcon = (props) => <Icon as={RiStackLine} {...props} />;
 export const SettingsIcon = (props) => <Icon as={FiSettings} {...props} />;
 export const SlackIcon = (props) => <Icon as={FiSlack} {...props} />;

@@ -19,9 +19,10 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 
-from models import Item, Location, ItemTag, Task, Report, Message, SlackConnection
+from models import Item, Location, Category, ItemTag, Task, Report, Message, SlackConnection
 from dimensions import (
-    Dimension, DimensionType, validate_dimension, aggregate_dimensions
+    Dimension, DimensionType, validate_dimension, validate_category_measure,
+    aggregate_dimensions, aggregate_by_category,
 )
 from search import match_name, DEFAULT_MIN_SCORE
 from recurrence import (
@@ -29,6 +30,7 @@ from recurrence import (
 )
 from schedules import compute_next_run, validate_schedule
 from report_sections import render_section, validate_sections
+from report_conditions import validate_trigger, evaluate_trigger
 from slack_blocks import render_message_blocks
 
 logger = Logger(child=True)
@@ -191,6 +193,151 @@ class LocationService:
         return True
 
 
+class CategoryService:
+    """Service for managing item categories.
+
+    A category declares one ``measure_type`` and (for weight/volume) a
+    ``preferred_unit``. Items reference a category via ``category_id``. Deleting a
+    category clears that reference on its items so aggregation never trips over a
+    dangling id.
+    """
+
+    def __init__(self, table, items_table=None):
+        self.table = table
+        # Optional handle to the items table, used only to clear category_id off
+        # an item on category deletion (via the CategoryIndex GSI).
+        self.items_table = items_table
+
+    def create_category(
+        self,
+        user_id: str,
+        name: str,
+        measure_type: str,
+        preferred_unit: Optional[str] = None,
+        description: str = "",
+    ) -> Dict[str, Any]:
+        """Create a category, validating its measure_type / preferred_unit pair."""
+        validate_category_measure(measure_type, preferred_unit)
+        category = Category.create(
+            user_id=user_id,
+            name=name,
+            measure_type=measure_type,
+            preferred_unit=preferred_unit or None,
+            description=description,
+        )
+        self.table.put_item(Item=category.to_dict())
+        logger.info(f"Created category: {category.category_id} for user: {user_id}")
+        return category.to_dict()
+
+    def get_category(self, user_id: str, category_id: str) -> Optional[Dict[str, Any]]:
+        """Get a category by ID for a specific user."""
+        response = self.table.get_item(Key={"user_id": user_id, "category_id": category_id})
+        return response.get("Item")
+
+    def list_categories(self, user_id: str) -> List[Dict[str, Any]]:
+        """List all categories for a specific user."""
+        response = self.table.query(KeyConditionExpression=Key("user_id").eq(user_id))
+        return response.get("Items", [])
+
+    def update_category(
+        self, user_id: str, category_id: str, updates: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Update a category for a specific user.
+
+        Re-validates the measure_type / preferred_unit pair against the merged
+        result so a category never ends up with an inconsistent measure.
+        """
+        category = self.get_category(user_id, category_id)
+        if not category:
+            return None
+
+        # Validate the merged measure/unit before writing.
+        measure_type = updates.get("measure_type", category.get("measure_type"))
+        preferred_unit = (
+            updates["preferred_unit"] if "preferred_unit" in updates
+            else category.get("preferred_unit")
+        )
+        if "measure_type" in updates or "preferred_unit" in updates:
+            validate_category_measure(measure_type, preferred_unit or None)
+
+        set_parts = ["updated_at = :updated_at"]
+        remove_parts = []
+        expr_values = {":updated_at": _now_iso()}
+        expr_names = {}
+
+        if "name" in updates:
+            set_parts.append("#n = :name")
+            expr_values[":name"] = updates["name"]
+            expr_names["#n"] = "name"
+        if "description" in updates:
+            set_parts.append("description = :description")
+            expr_values[":description"] = updates["description"]
+        if "measure_type" in updates:
+            set_parts.append("measure_type = :measure_type")
+            expr_values[":measure_type"] = updates["measure_type"]
+        if "measure_type" in updates or "preferred_unit" in updates:
+            # Keep preferred_unit consistent with the (possibly new) measure_type.
+            if preferred_unit:
+                set_parts.append("preferred_unit = :preferred_unit")
+                expr_values[":preferred_unit"] = preferred_unit
+            else:
+                set_parts.append("preferred_unit = :preferred_unit")
+                expr_values[":preferred_unit"] = None
+
+        update_expr = "SET " + ", ".join(set_parts)
+        if remove_parts:
+            update_expr += " REMOVE " + ", ".join(remove_parts)
+
+        update_kwargs = {
+            "Key": {"user_id": user_id, "category_id": category_id},
+            "UpdateExpression": update_expr,
+            "ExpressionAttributeValues": expr_values,
+            "ReturnValues": "ALL_NEW",
+        }
+        if expr_names:
+            update_kwargs["ExpressionAttributeNames"] = expr_names
+
+        response = self.table.update_item(**update_kwargs)
+        logger.info(f"Updated category: {category_id} for user: {user_id}")
+        return response.get("Attributes")
+
+    def delete_category(self, user_id: str, category_id: str) -> bool:
+        """Delete a category, clearing it off any items that reference it.
+
+        Returns False when the category does not exist (for a 404).
+        """
+        if not self.get_category(user_id, category_id):
+            return False
+        self._clear_category_from_items(user_id, category_id)
+        self.table.delete_item(Key={"user_id": user_id, "category_id": category_id})
+        logger.info(f"Deleted category: {category_id} for user: {user_id}")
+        return True
+
+    def _clear_category_from_items(self, user_id: str, category_id: str) -> None:
+        """Remove ``category_id`` from every item that references this category."""
+        if self.items_table is None:
+            return
+        response = self.items_table.query(
+            IndexName="CategoryIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id),
+        )
+        items = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = self.items_table.query(
+                IndexName="CategoryIndex",
+                KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(response.get("Items", []))
+        for item in items:
+            # category_id backs a sparse GSI, so clearing it must REMOVE the attribute.
+            self.items_table.update_item(
+                Key={"user_id": user_id, "item_id": item["item_id"]},
+                UpdateExpression="SET updated_at = :updated_at REMOVE category_id",
+                ExpressionAttributeValues={":updated_at": _now_iso()},
+            )
+
+
 class TagService:
     """Service for managing the item-tag reverse index (items-by-tag lookups)."""
 
@@ -236,9 +383,12 @@ class TagService:
 class ItemService:
     """Service for managing inventory items."""
 
-    def __init__(self, items_table, tags_table):
+    def __init__(self, items_table, tags_table, category_service=None):
         self.items_table = items_table
         self.tag_service = TagService(tags_table)
+        # Optional CategoryService; enables category assignment + measure-type
+        # enforcement on create/update. None disables category validation.
+        self.category_service = category_service
 
     @staticmethod
     def _deserialize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -253,6 +403,9 @@ class ItemService:
         # Guarantee a stable shape: items stored without dimensions omit the key.
         item.setdefault("dimensions", [])
         item.setdefault("tags", [])
+        # category_id is a sparse-index key: absent on storage when unset, but
+        # surfaced as None here so responses have a stable shape.
+        item.setdefault("category_id", None)
         # use_by_date is a sparse-index key: absent on storage when unset, but
         # surfaced as None here so responses have a stable shape.
         item.setdefault("use_by_date", None)
@@ -313,6 +466,7 @@ class ItemService:
         dimensions: List[Dict[str, Any]] = None,
         use_by_date: Optional[str] = None,
         tags: List[str] = None,
+        category_id: Optional[str] = None,
         notes: str = "",
         copies: int = 1
     ):
@@ -328,6 +482,7 @@ class ItemService:
         tags = [t.lower() for t in (tags or [])]
 
         self._validate_dimensions(dimensions)
+        self._validate_category(user_id, category_id, dimensions)
 
         created = []
         for _ in range(copies):
@@ -337,6 +492,7 @@ class ItemService:
                 location_id=location_id,
                 dimensions=dimensions,
                 tags=tags,
+                category_id=category_id,
                 use_by_date=use_by_date,
                 notes=notes
             )
@@ -366,6 +522,14 @@ class ItemService:
         response = self.items_table.query(
             IndexName="LocationIndex",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("location_id").eq(location_id)
+        )
+        return [self._deserialize_item(item) for item in response.get("Items", [])]
+
+    def get_items_by_category(self, user_id: str, category_id: str) -> List[Dict[str, Any]]:
+        """Get all items in a specific category for a specific user."""
+        response = self.items_table.query(
+            IndexName="CategoryIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id)
         )
         return [self._deserialize_item(item) for item in response.get("Items", [])]
 
@@ -473,6 +637,25 @@ class ItemService:
                 self.tag_service.add_tags_to_item(user_id, item_id, list(tags_to_add))
             if tags_to_remove:
                 self.tag_service.remove_tags_from_item(user_id, item_id, list(tags_to_remove))
+
+        # Category assignment enforces the measure-type constraint against the
+        # item's effective dimensions (the incoming set if updated, else stored).
+        effective_dimensions = (
+            updates["dimensions"] if "dimensions" in updates else item.get("dimensions", [])
+        )
+        if "category_id" in updates:
+            new_category_id = updates["category_id"]
+            if new_category_id:
+                self._validate_category(user_id, new_category_id, effective_dimensions)
+                set_parts.append("category_id = :category_id")
+                expr_values[":category_id"] = new_category_id
+            else:
+                # category_id backs a sparse GSI: clear it by REMOVING the attribute.
+                remove_parts.append("category_id")
+        elif "dimensions" in updates and item.get("category_id"):
+            # Dimensions changed on a categorized item: re-check the constraint so
+            # the item cannot drop the category's required measure type.
+            self._validate_category(user_id, item["category_id"], effective_dimensions)
 
         update_expr = "SET " + ", ".join(set_parts)
         if remove_parts:
@@ -667,10 +850,19 @@ class ItemService:
             for dim_type, dim in aggregated_dimensions.items()
         }
 
+        # Per-category rollup over the same matched items (empty without a
+        # CategoryService or when no matched item carries a category).
+        by_category = []
+        if self.category_service is not None:
+            by_category = aggregate_by_category(
+                items, self.category_service.list_categories(user_id)
+            )
+
         return {
             "total_items": total_items,
             "items_with_expiry": items_with_expiry,
-            "aggregated_dimensions": dimensions_dict
+            "aggregated_dimensions": dimensions_dict,
+            "by_category": by_category,
         }
 
     # ------------------------------------------------------------------
@@ -710,6 +902,32 @@ class ItemService:
         dim_types = [d.get("dimension_type") for d in dimensions]
         if len(dim_types) != len(set(dim_types)):
             raise ValueError("Duplicate dimension types not allowed")
+
+    def _validate_category(
+        self, user_id: str, category_id: Optional[str], dimensions: List[Dict[str, Any]]
+    ) -> None:
+        """Validate an item's category assignment, raising ValueError on any problem.
+
+        A ``weight`` / ``volume`` category rolls up the matching dimension, so an
+        item may join only if it carries a dimension of that type. A ``count``
+        category just counts items (dimension values are irrelevant), so any item
+        may join it. No-op when ``category_id`` is unset or no CategoryService is
+        wired.
+        """
+        if not category_id or self.category_service is None:
+            return
+        category = self.category_service.get_category(user_id, category_id)
+        if not category:
+            raise ValueError(f"Category not found: {category_id}")
+        measure_type = category.get("measure_type")
+        if measure_type == DimensionType.COUNT.value:
+            return
+        have_types = {d.get("dimension_type") for d in (dimensions or [])}
+        if measure_type not in have_types:
+            raise ValueError(
+                f"item in category '{category.get('name', category_id)}' must have a "
+                f"{measure_type} dimension"
+            )
 
 
 class TaskService:
@@ -1013,8 +1231,11 @@ class ReportService:
     advanced after each generation; it backs the periodic sweep's due filter.
     """
 
-    def __init__(self, reports_table):
+    def __init__(self, reports_table, category_service=None):
         self.reports_table = reports_table
+        # Optional CategoryService; when present, trigger validation checks that
+        # referenced category_ids exist.
+        self.category_service = category_service
 
     @staticmethod
     def _deserialize_report(report: Dict[str, Any]) -> Dict[str, Any]:
@@ -1029,11 +1250,20 @@ class ReportService:
         report.setdefault("schedule", {})
         report.setdefault("sections", [])
         report.setdefault("delivery", {})
+        report.setdefault("trigger", {})
         report.setdefault("next_run", None)
         report.setdefault("last_run_at", None)
         report["schedule"] = _decimals_to_float(report["schedule"])
         report["sections"] = _decimals_to_float(report["sections"])
+        report["trigger"] = _decimals_to_float(report["trigger"])
         return report
+
+    def _validate_trigger(self, user_id: str, trigger: Any) -> None:
+        """Validate a report trigger against the user's existing categories."""
+        valid_ids = None
+        if trigger and self.category_service is not None:
+            valid_ids = {c["category_id"] for c in self.category_service.list_categories(user_id)}
+        validate_trigger(trigger, valid_ids)
 
     def create_report(
         self,
@@ -1044,12 +1274,14 @@ class ReportService:
         enabled: bool = True,
         now: Optional[Any] = None,
         delivery: Dict[str, Any] = None,
+        trigger: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
-        """Create a report, validating its schedule, section rules, and delivery."""
+        """Create a report, validating its schedule, sections, delivery, trigger."""
         sections = sections or []
         validate_schedule(schedule)
         validate_sections(sections)
         _validate_delivery(delivery)
+        self._validate_trigger(user_id, trigger)
 
         next_run = compute_next_run(schedule, now)
         report = Report.create(
@@ -1060,6 +1292,7 @@ class ReportService:
             enabled=enabled,
             next_run=next_run,
             delivery=delivery or {},
+            trigger=trigger or {},
         )
         self.reports_table.put_item(Item=report.to_dict())
         logger.info(f"Created report: {report.report_id} for user: {user_id}")
@@ -1095,6 +1328,8 @@ class ReportService:
             validate_sections(updates["sections"])
         if "delivery" in updates:
             _validate_delivery(updates["delivery"])
+        if "trigger" in updates:
+            self._validate_trigger(user_id, updates["trigger"])
 
         set_parts = ["updated_at = :updated_at"]
         expr_values = {":updated_at": _now_iso()}
@@ -1105,7 +1340,7 @@ class ReportService:
             expr_values[":name"] = updates["name"]
             expr_names["#n"] = "name"
 
-        for field_name in ("enabled", "sections", "delivery"):
+        for field_name in ("enabled", "sections", "delivery", "trigger"):
             if field_name in updates:
                 set_parts.append(f"{field_name} = :{field_name}")
                 expr_values[f":{field_name}"] = updates[field_name]
@@ -1319,12 +1554,14 @@ class ReportGenerator:
     """
 
     def __init__(self, report_service, message_service, task_service, item_service,
-                 slack_service=None, app_base_url=""):
+                 category_service=None, slack_service=None, app_base_url=""):
         self.report_service = report_service
         self.message_service = message_service
         # Exposed as attributes so section renderers can reach the service layer.
         self.task_service = task_service
         self.item_service = item_service
+        # Section renderers and the trigger engine use category data.
+        self.category_service = category_service
         # Optional Slack delivery sink; None disables Slack posting.
         self.slack_service = slack_service
         # Web app base URL for links back from Slack (e.g. task/item deep links).

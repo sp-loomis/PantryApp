@@ -24,6 +24,7 @@ from moto import mock_aws
 
 ITEMS_TABLE = "test-items"
 LOCATIONS_TABLE = "test-locations"
+CATEGORIES_TABLE = "test-categories"
 ITEM_TAGS_TABLE = "test-item-tags"
 TASKS_TABLE = "test-tasks"
 REPORTS_TABLE = "test-reports"
@@ -64,10 +65,24 @@ def create_tables(dynamodb) -> None:
             {"AttributeName": "item_id", "AttributeType": "S"},
             {"AttributeName": "location_id", "AttributeType": "S"},
             {"AttributeName": "use_by_date", "AttributeType": "S"},
+            {"AttributeName": "category_id", "AttributeType": "S"},
         ],
         GlobalSecondaryIndexes=[
             _gsi("LocationIndex", "user_id", "location_id"),
             _gsi("UseByDateIndex", "user_id", "use_by_date"),
+            _gsi("CategoryIndex", "user_id", "category_id"),
+        ],
+    )
+    dynamodb.create_table(
+        TableName=CATEGORIES_TABLE,
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "category_id", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "category_id", "AttributeType": "S"},
         ],
     )
     dynamodb.create_table(
@@ -247,12 +262,31 @@ def dynamodb_tables():
 
 
 @pytest.fixture
-def services(dynamodb_tables):
-    """ItemService + LocationService backed by mocked DynamoDB (service-layer tests)."""
-    from services import ItemService, LocationService
+def category_service(dynamodb_tables):
+    """CategoryService backed by mocked DynamoDB (service-layer tests)."""
+    from services import CategoryService
 
+    yield CategoryService(
+        dynamodb_tables.Table(CATEGORIES_TABLE), dynamodb_tables.Table(ITEMS_TABLE)
+    )
+
+
+@pytest.fixture
+def services(dynamodb_tables):
+    """ItemService + LocationService backed by mocked DynamoDB (service-layer tests).
+
+    ItemService is wired with a CategoryService so category assignment/validation
+    is exercised in service-layer tests.
+    """
+    from services import ItemService, LocationService, CategoryService
+
+    categories = CategoryService(
+        dynamodb_tables.Table(CATEGORIES_TABLE), dynamodb_tables.Table(ITEMS_TABLE)
+    )
     item_service = ItemService(
-        dynamodb_tables.Table(ITEMS_TABLE), dynamodb_tables.Table(ITEM_TAGS_TABLE)
+        dynamodb_tables.Table(ITEMS_TABLE),
+        dynamodb_tables.Table(ITEM_TAGS_TABLE),
+        categories,
     )
     location_service = LocationService(dynamodb_tables.Table(LOCATIONS_TABLE))
     yield item_service, location_service, dynamodb_tables
@@ -269,9 +303,12 @@ def task_service(dynamodb_tables):
 @pytest.fixture
 def report_service(dynamodb_tables):
     """ReportService backed by mocked DynamoDB (service-layer tests)."""
-    from services import ReportService
+    from services import ReportService, CategoryService
 
-    yield ReportService(dynamodb_tables.Table(REPORTS_TABLE))
+    categories = CategoryService(
+        dynamodb_tables.Table(CATEGORIES_TABLE), dynamodb_tables.Table(ITEMS_TABLE)
+    )
+    yield ReportService(dynamodb_tables.Table(REPORTS_TABLE), categories)
 
 
 @pytest.fixture
@@ -286,16 +323,22 @@ def message_service(dynamodb_tables):
 def report_generator(dynamodb_tables):
     """ReportGenerator wired to all backing services (service-layer tests)."""
     from services import (
-        ReportService, MessageService, TaskService, ItemService, ReportGenerator,
+        ReportService, MessageService, TaskService, ItemService, CategoryService,
+        ReportGenerator,
     )
 
-    reports = ReportService(dynamodb_tables.Table(REPORTS_TABLE))
+    categories = CategoryService(
+        dynamodb_tables.Table(CATEGORIES_TABLE), dynamodb_tables.Table(ITEMS_TABLE)
+    )
+    reports = ReportService(dynamodb_tables.Table(REPORTS_TABLE), categories)
     messages = MessageService(dynamodb_tables.Table(MESSAGES_TABLE))
     tasks = TaskService(dynamodb_tables.Table(TASKS_TABLE))
     items = ItemService(
-        dynamodb_tables.Table(ITEMS_TABLE), dynamodb_tables.Table(ITEM_TAGS_TABLE)
+        dynamodb_tables.Table(ITEMS_TABLE),
+        dynamodb_tables.Table(ITEM_TAGS_TABLE),
+        categories,
     )
-    yield ReportGenerator(reports, messages, tasks, items)
+    yield ReportGenerator(reports, messages, tasks, items, category_service=categories)
 
 
 @pytest.fixture
@@ -307,6 +350,7 @@ def api(dynamodb_tables):
     """
     os.environ["ITEMS_TABLE_NAME"] = ITEMS_TABLE
     os.environ["LOCATIONS_TABLE_NAME"] = LOCATIONS_TABLE
+    os.environ["CATEGORIES_TABLE_NAME"] = CATEGORIES_TABLE
     os.environ["ITEM_TAGS_TABLE_NAME"] = ITEM_TAGS_TABLE
     os.environ["TASKS_TABLE_NAME"] = TASKS_TABLE
     os.environ["REPORTS_TABLE_NAME"] = REPORTS_TABLE

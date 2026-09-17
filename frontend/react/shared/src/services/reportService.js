@@ -32,10 +32,16 @@ export async function getReport(reportId) {
 
 /**
  * Create a report.
- * @param {{name, schedule, sections?, enabled?}} payload
+ * @param {{name, schedule, sections?, enabled?, delivery?, trigger?}} payload
  *   schedule: { frequency: 'daily'|'weekly'|'monthly', time_of_day: 'HH:MM',
  *               weekday?: 0-6, day_of_month?: 1-28, tz: string }
  *   sections: [{ type: 'custom_message'|'task_query'|'item_query', heading, config }]
+ *   trigger (optional conditional gate — the report generates on schedule only when
+ *     the trigger passes against live data; empty = always generate):
+ *     { match: 'all'|'any',
+ *       conditions: [{ query: { location_id?, tags?, name? },
+ *                      match: 'all'|'any',
+ *                      inequalities: [{ category_id, operator: 'below'|'above', threshold }] }] }
  */
 export async function createReport(payload) {
   const data = await api.post('/reports', payload);

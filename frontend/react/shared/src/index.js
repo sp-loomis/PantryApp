@@ -37,6 +37,14 @@ export {
   searchItems
 } from './services/inventoryService.js';
 export {
+  listCategories,
+  getCategory,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  listMeasureUnits
+} from './services/categoryService.js';
+export {
   listTasks,
   getTask,
   createTask,

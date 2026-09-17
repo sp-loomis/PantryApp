@@ -41,6 +41,7 @@ import PageHeader from '../components/PageHeader';
 import ErrorMessage from '../components/ErrorMessage';
 import LocationSelect from '../components/LocationSelect';
 import ChannelSelect from '../components/ChannelSelect';
+import TriggerBuilder from '../components/TriggerBuilder';
 import { PlusIcon, TrashIcon } from '../components/icons';
 
 const WEEKDAYS = [
@@ -174,6 +175,8 @@ export default function ReportFormPage() {
   const [dayOfMonth, setDayOfMonth] = useState(1);
   const [tz] = useState(browserTz());
   const [sections, setSections] = useState([defaultSection('task_query')]);
+  // Optional category-condition trigger; empty conditions = always generate.
+  const [trigger, setTrigger] = useState({ match: 'all', conditions: [] });
   // Optional Slack delivery destination. Empty connection = in-app only.
   const [slackConnectionId, setSlackConnectionId] = useState('');
   const [slackChannelId, setSlackChannelId] = useState('');
@@ -218,6 +221,8 @@ export default function ReportFormPage() {
         setSlackConnectionId(slack.connection_id || '');
         setSlackChannelId(slack.channel_id || '');
       }
+      const t = report.trigger;
+      setTrigger(t && t.conditions ? { match: t.match || 'all', conditions: t.conditions } : { match: 'all', conditions: [] });
       setSections(
         (report.sections || []).map((sec) => {
           const config = { ...(sec.config || {}) };
@@ -247,6 +252,33 @@ export default function ReportFormPage() {
     return schedule;
   };
 
+  /** Prune a condition query to non-empty fields only. */
+  const cleanQuery = (query = {}) => {
+    const out = {};
+    if (query.location_id) out.location_id = query.location_id;
+    if (query.tags && query.tags.length) out.tags = query.tags;
+    if (query.name) out.name = query.name;
+    return out;
+  };
+
+  /** Build the trigger payload, or {} (no gate) when there are no conditions. */
+  const buildTrigger = () => {
+    const conditions = trigger.conditions || [];
+    if (conditions.length === 0) return {};
+    return {
+      match: trigger.match || 'all',
+      conditions: conditions.map((c) => ({
+        query: cleanQuery(c.query),
+        match: c.match || 'all',
+        inequalities: (c.inequalities || []).map((q) => ({
+          category_id: q.category_id,
+          operator: q.operator,
+          threshold: Number(q.threshold),
+        })),
+      })),
+    };
+  };
+
   const updateSection = (index, patch) => {
     setSections((prev) => prev.map((sec, i) => (i === index ? { ...sec, ...patch } : sec)));
   };
@@ -272,6 +304,14 @@ export default function ReportFormPage() {
         errors[`section_${i}`] = 'Custom message needs some text';
       }
     });
+    // Each trigger inequality needs a category and a numeric threshold.
+    (trigger.conditions || []).forEach((cond) => {
+      (cond.inequalities || []).forEach((q) => {
+        if (!q.category_id || q.threshold === '' || Number.isNaN(Number(q.threshold))) {
+          errors.trigger = 'Each trigger check needs a category and a numeric amount';
+        }
+      });
+    });
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -293,6 +333,7 @@ export default function ReportFormPage() {
       schedule: buildSchedule(),
       sections,
       delivery,
+      trigger: buildTrigger(),
     };
 
     try {
@@ -479,6 +520,18 @@ export default function ReportFormPage() {
                 </Box>
               ))}
             </VStack>
+          </Box>
+
+          <Divider />
+
+          {/* Optional category-condition trigger */}
+          <Box>
+            <TriggerBuilder value={trigger} onChange={setTrigger} tagOptions={tagOptions} />
+            {fieldErrors.trigger && (
+              <Text color="red.500" fontSize="sm" mt={2}>
+                {fieldErrors.trigger}
+              </Text>
+            )}
           </Box>
 
           <Divider />

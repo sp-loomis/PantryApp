@@ -8,11 +8,13 @@ from report_sections import render_section, validate_sections, SECTION_TYPES
 class _FakeServices:
     """Stand-in exposing the service methods renderers call."""
 
-    def __init__(self, tasks=None, items=None):
+    def __init__(self, tasks=None, items=None, categories=None):
         self.task_service = self
         self.item_service = self
+        self.category_service = self
         self._tasks = tasks or []
         self._items = items or []
+        self._categories = categories or []
 
     def list_tasks(self, user_id, tz=None, status=None, tag=None, tags=None, name=None):
         self.last_task_query = {
@@ -23,6 +25,9 @@ class _FakeServices:
     def search_items(self, user_id, name=None, location_id=None, tags=None):
         self.last_item_query = {"name": name, "location_id": location_id, "tags": tags}
         return self._items
+
+    def list_categories(self, user_id):
+        return self._categories
 
 
 def test_custom_message_renders_text():
@@ -59,8 +64,31 @@ def test_item_query_routes_through_search_items():
         "config": {"tags": ["dairy"], "name": "mil", "location_id": "loc-1"},
     }
     result = render_section(section, "u1", services)
-    assert result["content"] == {"items": [{"name": "milk"}], "count": 1}
+    assert result["content"] == {
+        "items": [{"name": "milk"}], "count": 1, "category_totals": [],
+    }
     assert services.last_item_query == {"name": "mil", "location_id": "loc-1", "tags": ["dairy"]}
+
+
+def test_item_query_includes_category_totals():
+    services = _FakeServices(
+        items=[
+            {"name": "ribeye", "category_id": "c-beef",
+             "dimensions": [{"dimension_type": "weight", "value": 2, "unit": "lb"}]},
+            {"name": "chuck", "category_id": "c-beef",
+             "dimensions": [{"dimension_type": "weight", "value": 3, "unit": "lb"}]},
+        ],
+        categories=[
+            {"category_id": "c-beef", "name": "beef",
+             "measure_type": "weight", "preferred_unit": "lb"},
+        ],
+    )
+    section = {"type": "item_query", "config": {}}
+    totals = render_section(section, "u1", services)["content"]["category_totals"]
+    assert len(totals) == 1
+    assert totals[0]["category_id"] == "c-beef"
+    assert totals[0]["value"] == pytest.approx(5.0)
+    assert totals[0]["unit"] == "lb"
 
 
 def test_item_query_empty_filters_pass_none():

@@ -155,6 +155,79 @@ def aggregate_dimensions(items: List[Dict[str, Any]]) -> Dict[str, Dimension]:
     return result
 
 
+def aggregate_by_category(
+    items: List[Dict[str, Any]], categories: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Aggregate a set of items grouped by their category.
+
+    For each category that has at least one matching item in ``items``, returns a
+    rollup honoring the category's declared ``measure_type``:
+
+    - ``count``  -> ``value`` is the *number of items* in the category; ``unit`` is
+      ``"items"`` (dimension values are ignored).
+    - ``weight`` / ``volume`` -> ``value`` is the sum of that dimension across the
+      items, converted to the category's ``preferred_unit`` (base-unit sum when no
+      preferred_unit is set).
+
+    Items whose ``category_id`` is unset or points at a category not in
+    ``categories`` are excluded. Returns a list of
+    ``{category_id, name, measure_type, value (float), unit}`` ordered by category
+    name.
+    """
+    by_id = {c["category_id"]: c for c in categories}
+
+    # Group items under the categories we know about.
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in items:
+        cat_id = item.get("category_id")
+        if cat_id and cat_id in by_id:
+            grouped.setdefault(cat_id, []).append(item)
+
+    results: List[Dict[str, Any]] = []
+    for cat_id, cat_items in grouped.items():
+        category = by_id[cat_id]
+        measure_type = category.get("measure_type")
+        preferred_unit = category.get("preferred_unit")
+
+        if measure_type == DimensionType.COUNT.value:
+            value = Decimal(len(cat_items))
+            unit = "items"
+        else:
+            # Sum the matching dimension across items in base units.
+            base_total = Decimal("0")
+            for item in cat_items:
+                for dim_data in item.get("dimensions", []):
+                    if dim_data.get("dimension_type") == measure_type:
+                        base_total += Dimension.from_dict(dim_data).to_base_unit()
+            if preferred_unit:
+                dim = Dimension.from_base_unit(
+                    DimensionType(measure_type), base_total, preferred_unit
+                )
+                value, unit = dim.value, dim.unit
+            else:
+                value, unit = base_total, _base_unit_for(measure_type)
+
+        results.append({
+            "category_id": cat_id,
+            "name": category.get("name"),
+            "measure_type": measure_type,
+            "value": float(value),
+            "unit": unit,
+        })
+
+    results.sort(key=lambda r: (r["name"] or "").lower())
+    return results
+
+
+def _base_unit_for(measure_type: str) -> str:
+    """Base storage unit for a measure type (used when no preferred_unit is set)."""
+    if measure_type == DimensionType.WEIGHT.value:
+        return WeightUnit.GRAM.value
+    if measure_type == DimensionType.VOLUME.value:
+        return VolumeUnit.MILLILITER.value
+    return "units"
+
+
 def _convert_weight_to_appropriate_unit(grams: Decimal) -> Dimension:
     """Convert weight in grams to the most appropriate imperial unit."""
     # Convert to pounds first
@@ -223,3 +296,30 @@ def validate_dimension(dimension_type: str, unit: str) -> bool:
         return False
     except ValueError:
         return False
+
+
+def validate_category_measure(measure_type: str, preferred_unit: Optional[str]) -> None:
+    """Validate a category's measure_type + preferred_unit pair, raising ValueError.
+
+    - ``count``: aggregation counts items, so ``preferred_unit`` is not used and
+      must be empty/None.
+    - ``weight`` / ``volume``: ``preferred_unit`` is required and must be a valid
+      unit for that dimension type.
+    """
+    try:
+        dim_type = DimensionType(measure_type)
+    except ValueError:
+        valid = ", ".join(t.value for t in DimensionType)
+        raise ValueError(f"Invalid measure_type {measure_type!r} (must be one of {valid})")
+
+    if dim_type == DimensionType.COUNT:
+        if preferred_unit:
+            raise ValueError("preferred_unit is not allowed for a 'count' category")
+        return
+
+    if not preferred_unit:
+        raise ValueError(f"preferred_unit is required for a '{measure_type}' category")
+    if not validate_dimension(measure_type, preferred_unit):
+        raise ValueError(
+            f"Invalid preferred_unit {preferred_unit!r} for measure_type {measure_type!r}"
+        )

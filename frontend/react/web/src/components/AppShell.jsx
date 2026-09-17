@@ -14,6 +14,7 @@ import { Box, Flex, HStack, VStack, Text, Heading } from '@chakra-ui/react';
 import {
   SearchIcon,
   LocationIcon,
+  CategoryIcon,
   TaskIcon,
   TagIcon,
   PlusIcon,
@@ -25,6 +26,7 @@ import NotificationsMenu from './NotificationsMenu';
 const NAV_ITEMS = [
   { to: '/', label: 'Search', icon: SearchIcon, end: true },
   { to: '/locations', label: 'Locations', icon: LocationIcon },
+  { to: '/categories', label: 'Categories', icon: CategoryIcon },
   { to: '/tasks', label: 'Tasks', icon: TaskIcon },
   { to: '/reports', label: 'Reports', icon: ReportIcon },
   { to: '/tags', label: 'Tags', icon: TagIcon },

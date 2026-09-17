@@ -130,6 +130,28 @@ def _entry_fields(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, 
     return fields
 
 
+def _format_total(value: Any) -> str:
+    """Render a category total value compactly (trim trailing zeros)."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    text = f"{num:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _category_totals_block(content: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A context block summarizing per-category aggregates, or None when empty."""
+    totals = content.get("category_totals") or []
+    if not totals:
+        return None
+    parts = [
+        f"*{_escape(t.get('name') or '')}*: {_format_total(t.get('value'))} {_escape(t.get('unit') or '')}".strip()
+        for t in totals
+    ]
+    return _context("📊 " + "  ·  ".join(parts))
+
+
 def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, Any]]:
     """Render one report section into its (divider-led) block group."""
     blocks: List[Dict[str, Any]] = [_divider()]
@@ -151,6 +173,8 @@ def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[D
         noun = "task" if section_type == "task_query" else "item"
         if not (content.get("items") or []):
             blocks.append(_context(f"_No {noun}s_"))
+            # Category totals may still be worth showing (e.g. an empty query with
+            # a zeroed category), but with no items there are none — skip.
             return blocks
         fields = _entry_fields(section, app_base_url)
         # A section block holds at most 10 fields; split longer lists across
@@ -162,6 +186,10 @@ def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[D
         if more > 0:
             summary += f" · showing first {LIST_ITEMS_MAX}"
         blocks.append(_context(summary))
+        # Per-category aggregate rollup (item_query only).
+        totals_block = _category_totals_block(content)
+        if totals_block is not None:
+            blocks.append(totals_block)
         return blocks
 
     # Unknown/future section type: heading only (best-effort, no crash).

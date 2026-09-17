@@ -41,6 +41,61 @@ class Location:
 
 
 @dataclass
+class Category:
+    """Item category model.
+
+    A category declares a single ``measure_type`` (``count`` / ``weight`` /
+    ``volume``, matching :class:`dimensions.DimensionType`). Items assigned to it
+    must carry a dimension of that type. Aggregation over a category rolls those
+    dimensions up: ``count`` reports the *number of items*; ``weight`` / ``volume``
+    sum the matching dimension and convert to ``preferred_unit``.
+
+    ``preferred_unit`` is only meaningful for weight/volume (the reporting target
+    unit); it is ignored for ``count`` and stored as None there.
+    """
+    user_id: str
+    category_id: str
+    name: str
+    measure_type: str
+    preferred_unit: Optional[str] = None
+    description: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    def create(
+        cls,
+        user_id: str,
+        name: str,
+        measure_type: str,
+        preferred_unit: Optional[str] = None,
+        description: str = "",
+    ) -> "Category":
+        """Create a new Category instance."""
+        return cls(
+            user_id=user_id,
+            category_id=str(uuid.uuid4()),
+            name=name,
+            measure_type=measure_type,
+            preferred_unit=preferred_unit,
+            description=description,
+        )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "user_id": self.user_id,
+            "category_id": self.category_id,
+            "name": self.name,
+            "measure_type": self.measure_type,
+            "preferred_unit": self.preferred_unit,
+            "description": self.description,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
 class Item:
     """Inventory item model with support for multiple dimensions."""
     user_id: str
@@ -49,6 +104,7 @@ class Item:
     location_id: str
     dimensions: List[Dict[str, Any]] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)  # Denormalized tags for read efficiency
+    category_id: Optional[str] = None  # At most one category (FK to Category)
     use_by_date: Optional[str] = None
     notes: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -62,6 +118,7 @@ class Item:
         location_id: str,
         dimensions: List[Dict[str, Any]] = None,
         tags: List[str] = None,
+        category_id: Optional[str] = None,
         use_by_date: Optional[str] = None,
         notes: str = ""
     ) -> "Item":
@@ -73,6 +130,7 @@ class Item:
             location_id=location_id,
             dimensions=dimensions or [],
             tags=tags or [],
+            category_id=category_id,
             use_by_date=use_by_date,
             notes=notes
         )
@@ -92,6 +150,10 @@ class Item:
         }
         if self.dimensions:
             result["dimensions"] = self.dimensions
+        # category_id backs a sparse GSI: omit the attribute entirely when unset
+        # (a NULL value is rejected on an index key).
+        if self.category_id:
+            result["category_id"] = self.category_id
         return result
 
 
@@ -208,6 +270,12 @@ class Report:
     # Optional delivery destinations beyond the in-app message log, e.g.
     # {"slack": {"connection_id": ..., "channel_id": ...}}. Empty = in-app only.
     delivery: Dict[str, Any] = field(default_factory=dict)
+    # Optional conditional gate. When non-empty, the sweep generates the report
+    # only if the trigger evaluates true against live data. Shape:
+    # {"match": "all"|"any", "conditions": [{"query": {...}, "match": "all"|"any",
+    #  "inequalities": [{"category_id", "operator": "below"|"above", "threshold"}]}]}.
+    # Empty = no gate (fire on schedule). See report_conditions.evaluate_trigger.
+    trigger: Dict[str, Any] = field(default_factory=dict)
     next_run: Optional[str] = None
     last_run_at: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -223,6 +291,7 @@ class Report:
         enabled: bool = True,
         next_run: Optional[str] = None,
         delivery: Dict[str, Any] = None,
+        trigger: Dict[str, Any] = None,
     ) -> "Report":
         """Create a new Report instance."""
         return cls(
@@ -233,6 +302,7 @@ class Report:
             schedule=schedule or {},
             sections=sections or [],
             delivery=delivery or {},
+            trigger=trigger or {},
             next_run=next_run,
         )
 
@@ -246,6 +316,7 @@ class Report:
             "schedule": self.schedule,
             "sections": self.sections,
             "delivery": self.delivery,
+            "trigger": self.trigger,
             "next_run": self.next_run,
             "last_run_at": self.last_run_at,
             "created_at": self.created_at,

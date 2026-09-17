@@ -14,6 +14,8 @@ rendered content.
 
 from typing import Any, Callable, Dict, List
 
+from dimensions import aggregate_by_category
+
 
 def _tags(config: Dict[str, Any]) -> List[str]:
     """Read a section's tag filter as a list.
@@ -62,7 +64,13 @@ def render_item_query(user_id: str, config: Dict[str, Any], services: Any, tz: A
         location_id=config.get("location_id") or None,
         tags=_tags(config) or None,
     )
-    return {"items": items, "count": len(items)}
+    # Roll the matched items up per category (aggregate value across all categories
+    # present in the query). Skipped when no category service is wired.
+    category_service = getattr(services, "category_service", None)
+    category_totals: List[Dict[str, Any]] = []
+    if category_service is not None:
+        category_totals = aggregate_by_category(items, category_service.list_categories(user_id))
+    return {"items": items, "count": len(items), "category_totals": category_totals}
 
 
 # Registry of section type -> renderer. The keys are the valid ``type`` values a

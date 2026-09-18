@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link as RouterLink, useLocation } from 'react-router-dom';
 import {
   Badge,
   Box,
@@ -17,6 +17,7 @@ import {
   Heading,
   HStack,
   IconButton,
+  Link,
   Select,
   Spinner,
   Text,
@@ -242,7 +243,13 @@ export default function MessageLogPage() {
                   <HStack spacing={2} minW={0}>
                     {unread && <Badge colorScheme="brand">New</Badge>}
                     <Heading size="sm" noOfLines={1}>
-                      {message.title}
+                      <Link
+                        as={RouterLink}
+                        to={`/messages/${message.message_id}`}
+                        _hover={{ color: 'brand.500' }}
+                      >
+                        {message.title}
+                      </Link>
                     </Heading>
                   </HStack>
                   <HStack spacing={1} flexShrink={0}>

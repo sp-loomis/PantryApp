@@ -28,6 +28,7 @@ import TasksDashboardPage from './pages/TasksDashboardPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import TaskFormPage from './pages/TaskFormPage';
 import MessageLogPage from './pages/MessageLogPage';
+import MessageDetailPage from './pages/MessageDetailPage';
 import ReportsPage from './pages/ReportsPage';
 import ReportFormPage from './pages/ReportFormPage';
 import SettingsPage from './pages/SettingsPage';
@@ -76,6 +77,7 @@ function App() {
               <Route path="/tags" element={<TagsPage />} />
               <Route path="/tags/:tag" element={<TagDetailPage />} />
               <Route path="/messages" element={<MessageLogPage />} />
+              <Route path="/messages/:messageId" element={<MessageDetailPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/reports/new" element={<ReportFormPage />} />
               <Route path="/reports/:reportId/edit" element={<ReportFormPage />} />

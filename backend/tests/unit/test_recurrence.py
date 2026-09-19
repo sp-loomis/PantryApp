@@ -164,3 +164,141 @@ def test_interval_future_anchor_reports_first_window():
     status = compute_status(task, "UTC", NOW)
     assert status["current_due"] == "2026-09-14"  # 09-10 + (5-1) days
     assert status["active"] is True
+
+
+# ---------------------------------------------------------------------------
+# Decision paths: trigger resolution (resolve_tasks)
+# ---------------------------------------------------------------------------
+
+from recurrence import resolve_tasks, deadline_date, trigger_matches, completion_window_key  # noqa: E402
+from datetime import date  # noqa: E402
+
+
+def _daily_decision(task_id, decision):
+    """A daily yes/no decision source, answered `decision` for NOW's window."""
+    return {
+        "task_id": task_id,
+        "name": task_id,
+        "recurrence_type": "daily",
+        "answer_mode": "yesno",
+        "last_decision": decision,
+        "last_completed_window": "2026-09-05",  # NOW's daily window
+    }
+
+
+def _dependent(task_id, source_id, on="yes", deadline="same_day", offset_days=None, **extra):
+    trigger = {"source_task_id": source_id, "on": on, "deadline": deadline}
+    if offset_days is not None:
+        trigger["offset_days"] = offset_days
+    return {"task_id": task_id, "name": task_id, "recurrence_type": "none",
+            "trigger": trigger, **extra}
+
+
+def _by_id(resolved):
+    return {t["task_id"]: t for t in resolved}
+
+
+def test_trigger_matches_semantics():
+    assert trigger_matches("yes", "yes") is True
+    assert trigger_matches("yes", "no") is False
+    assert trigger_matches("any", "no") is True
+    assert trigger_matches("any", None) is False  # unanswered never satisfies
+
+
+def test_deadline_date_variants():
+    anchor = date(2026, 9, 5)  # Saturday, ISO week 36
+    assert deadline_date(anchor, "same_day", None) == anchor
+    assert deadline_date(anchor, "same_week", None) == date(2026, 9, 6)  # Sunday
+    assert deadline_date(anchor, "offset", 3) == date(2026, 9, 8)
+
+
+def test_dependent_active_when_source_answered_yes():
+    src = _daily_decision("a", "yes")
+    dep = _dependent("b", "a", on="yes")
+    r = _by_id(resolve_tasks([src, dep], "UTC", NOW))
+    assert r["b"]["computed_status"] == "due_today"
+    assert r["b"]["active"] is True
+    assert r["b"]["current_due"] == "2026-09-05"
+
+
+def test_dependent_dormant_when_source_unanswered():
+    src = {"task_id": "a", "recurrence_type": "daily", "answer_mode": "yesno"}
+    dep = _dependent("b", "a", on="yes")
+    r = _by_id(resolve_tasks([src, dep], "UTC", NOW))
+    assert r["b"]["computed_status"] == "dormant"
+    assert r["b"]["active"] is False
+    assert r["b"]["current_due"] is None
+
+
+def test_yes_and_no_branch_are_mutually_exclusive():
+    src = _daily_decision("a", "no")
+    yes_dep = _dependent("y", "a", on="yes")
+    no_dep = _dependent("n", "a", on="no")
+    r = _by_id(resolve_tasks([src, yes_dep, no_dep], "UTC", NOW))
+    assert r["y"]["active"] is False and r["y"]["computed_status"] == "dormant"
+    assert r["n"]["active"] is True
+
+
+def test_dependent_deadline_same_week_and_offset():
+    src = _daily_decision("a", "yes")
+    wk = _dependent("w", "a", on="yes", deadline="same_week")
+    off = _dependent("o", "a", on="yes", deadline="offset", offset_days=3)
+    r = _by_id(resolve_tasks([src, wk, off], "UTC", NOW))
+    assert r["w"]["current_due"] == "2026-09-06"  # Sunday of NOW's week
+    assert r["o"]["current_due"] == "2026-09-08"  # NOW + 3 days
+
+
+def test_dependent_done_keyed_to_source_window():
+    src = _daily_decision("a", "yes")
+    # Completed against the source's current window -> done.
+    dep = _dependent("b", "a", on="yes", last_completed_window="2026-09-05")
+    r = _by_id(resolve_tasks([src, dep], "UTC", NOW))
+    assert r["b"]["done"] is True
+    assert r["b"]["active"] is False
+
+
+def test_dependent_rearms_when_source_window_rolls():
+    # Source answered yes yesterday (old window), completed dependent then too.
+    src = {"task_id": "a", "recurrence_type": "daily", "answer_mode": "yesno",
+           "last_decision": "yes", "last_completed_window": "2026-09-04"}
+    dep = _dependent("b", "a", on="yes", last_completed_window="2026-09-04")
+    r = _by_id(resolve_tasks([src, dep], "UTC", NOW))
+    # NOW is 09-05: source no longer answered for today -> dependent dormant again.
+    assert r["a"]["done"] is False
+    assert r["b"]["computed_status"] == "dormant"
+    assert r["b"]["active"] is False
+
+
+def test_chained_dependents_resolve_transitively():
+    a = _daily_decision("a", "yes")
+    # b is itself a decision, triggered by a; answered yes for the borrowed window.
+    b = _dependent("b", "a", on="yes", answer_mode="yesno", last_decision="yes",
+                   last_completed_window="2026-09-05")
+    c = _dependent("c", "b", on="yes")
+    r = _by_id(resolve_tasks([a, b, c], "UTC", NOW))
+    assert r["b"]["done"] is True          # b answered yes for the window
+    assert r["c"]["active"] is True        # c fires off b's yes
+
+
+def test_cycle_degrades_to_untriggered_without_crashing():
+    a = _dependent("a", "b", on="any")
+    b = _dependent("b", "a", on="any")
+    # Should not raise; both simply resolve (untriggered fallback for the cycle).
+    resolved = resolve_tasks([a, b], "UTC", NOW)
+    assert {t["task_id"] for t in resolved} == {"a", "b"}
+
+
+def test_dangling_source_is_dormant():
+    dep = _dependent("b", "missing", on="yes")
+    r = _by_id(resolve_tasks([dep], "UTC", NOW))
+    assert r["b"]["computed_status"] == "dormant"
+    assert r["b"]["active"] is False
+
+
+def test_completion_window_key_borrows_source_window():
+    src = _daily_decision("a", "yes")
+    dep = _dependent("b", "a", on="yes")
+    # b borrows a's daily window as its completion key.
+    assert completion_window_key([src, dep], "b", "UTC", NOW) == "2026-09-05"
+    # a uses its own window.
+    assert completion_window_key([src, dep], "a", "UTC", NOW) == "2026-09-05"

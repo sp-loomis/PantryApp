@@ -26,7 +26,8 @@ from dimensions import (
 )
 from search import match_name, DEFAULT_MIN_SCORE
 from recurrence import (
-    RECURRENCE_TYPES, compute_status, current_window_key, local_now,
+    RECURRENCE_TYPES, TRIGGER_ON, TRIGGER_DEADLINES, compute_status,
+    current_window_key, completion_window_key, local_now, resolve_tasks,
 )
 from schedules import compute_next_run, validate_schedule
 from report_sections import render_section, validate_sections
@@ -959,6 +960,9 @@ class TaskService:
         task.setdefault("graceful", True)
         task.setdefault("last_completed_window", None)
         task.setdefault("last_completed_at", None)
+        task.setdefault("answer_mode", "checkbox")
+        task.setdefault("last_decision", None)
+        task.setdefault("trigger", None)
         return task
 
     def _with_status(
@@ -980,11 +984,15 @@ class TaskService:
         anchor_date: Optional[str] = None,
         due_date: Optional[str] = None,
         graceful: bool = True,
+        answer_mode: str = "checkbox",
+        trigger: Optional[Dict[str, Any]] = None,
         tz: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a task, validating its recurrence rule."""
+        """Create a task, validating its recurrence rule and optional trigger."""
         tags = [t.lower() for t in (tags or [])]
         self._validate_recurrence(recurrence_type, recurrence_interval, anchor_date, due_date)
+        answer_mode = self._validate_answer_mode(answer_mode)
+        trigger = self._validate_trigger(user_id, trigger)
 
         # Interval tasks need a stable anchor; default to "today" (in the
         # caller's tz) so windows are computed from creation onward.
@@ -1001,6 +1009,8 @@ class TaskService:
             anchor_date=anchor_date,
             due_date=due_date,
             graceful=graceful,
+            answer_mode=answer_mode,
+            trigger=trigger,
         )
 
         storage_dict = task.to_dict()
@@ -1014,12 +1024,28 @@ class TaskService:
         return self._with_status(task.to_dict(), tz)
 
     def get_task(self, user_id: str, task_id: str, tz: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a task by ID for a specific user, with computed status."""
+        """Get a task by ID for a specific user, with computed status.
+
+        A triggered task's status depends on its source, so we resolve against
+        the user's whole task set rather than the single row.
+        """
         response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
-        task = response.get("Item")
-        if not task:
+        if not response.get("Item"):
             return None
-        return self._with_status(task, tz)
+        for task in self._resolved_tasks(user_id, tz):
+            if task.get("task_id") == task_id:
+                return task
+        return None
+
+    def _resolved_tasks(
+        self, user_id: str, tz: Optional[str] = None, now: Optional[Any] = None
+    ) -> List[Dict[str, Any]]:
+        """Query a user's tasks and merge computed status (trigger-aware)."""
+        response = self.tasks_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id)
+        )
+        tasks = [self._deserialize_task(t) for t in response.get("Items", [])]
+        return resolve_tasks(tasks, tz, now)
 
     def list_tasks(
         self,
@@ -1039,11 +1065,8 @@ class TaskService:
         task name via the same matcher as inventory search. All tasks are evaluated
         against a single ``now`` for a consistent snapshot.
         """
-        response = self.tasks_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
         now = local_now(tz)
-        tasks = [self._with_status(t, tz, now) for t in response.get("Items", [])]
+        tasks = self._resolved_tasks(user_id, tz, now)
 
         # Combine the legacy scalar tag with the tags list; all must match (AND).
         wanted_tags = {t.lower() for t in (tags or [])}
@@ -1084,6 +1107,13 @@ class TaskService:
                 merged.get("due_date"),
             )
 
+        if "answer_mode" in updates:
+            updates["answer_mode"] = self._validate_answer_mode(updates["answer_mode"])
+        if "trigger" in updates:
+            updates["trigger"] = self._validate_trigger(
+                user_id, updates["trigger"], self_task_id=task_id
+            )
+
         set_parts = ["updated_at = :updated_at"]
         remove_parts = []
         expr_values = {":updated_at": _now_iso()}
@@ -1094,10 +1124,22 @@ class TaskService:
             expr_values[":name"] = updates["name"]
             expr_names["#n"] = "name"
 
-        for field_name in ("notes", "recurrence_type", "recurrence_interval", "anchor_date", "graceful"):
+        for field_name in (
+            "notes", "recurrence_type", "recurrence_interval", "anchor_date",
+            "graceful", "answer_mode",
+        ):
             if field_name in updates:
                 set_parts.append(f"{field_name} = :{field_name}")
                 expr_values[f":{field_name}"] = updates[field_name]
+
+        if "trigger" in updates:
+            # Clearing a trigger REMOVEs it (back to a plain task); setting one
+            # SETs the validated dict.
+            if updates["trigger"] is None:
+                remove_parts.append("trigger")
+            else:
+                set_parts.append("trigger = :trigger")
+                expr_values[":trigger"] = updates["trigger"]
 
         if "tags" in updates:
             set_parts.append("#tags = :tags")
@@ -1132,27 +1174,48 @@ class TaskService:
             return None
 
         logger.info(f"Updated task: {task_id} for user: {user_id}")
-        return self._with_status(attributes, tz)
+        # Resolve against siblings so a (now) triggered task reports true status.
+        return self.get_task(user_id, task_id, tz)
 
     def complete_task(
-        self, user_id: str, task_id: str, tz: Optional[str] = None, now: Optional[Any] = None
+        self,
+        user_id: str,
+        task_id: str,
+        decision: Optional[str] = None,
+        tz: Optional[str] = None,
+        now: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Mark a task complete for its current window (recurring) or lifetime (one-shot)."""
-        response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
-        task = response.get("Item")
-        if not task:
-            return None
-        task = self._deserialize_task(task)
+        """Mark a task complete / answer a decision for its current window.
 
-        now_local = local_now(tz, now)
+        ``decision`` (``"yes"``/``"no"``) is required for a ``yesno`` (decision)
+        task and ignored for a plain ``checkbox`` task. A triggered task records
+        its *source's* window so it re-arms in lockstep with the decision it
+        depends on; see ``recurrence.completion_window_key``.
+        """
+        # Query the whole partition once: we need siblings both to find the task
+        # and to resolve a triggered task's borrowed completion window.
+        query = self.tasks_table.query(KeyConditionExpression=Key("user_id").eq(user_id))
+        tasks = [self._deserialize_task(t) for t in query.get("Items", [])]
+        task = next((t for t in tasks if t.get("task_id") == task_id), None)
+        if task is None:
+            return None
+
         set_parts = ["updated_at = :updated_at", "last_completed_at = :completed_at"]
         expr_values = {":updated_at": _now_iso(), ":completed_at": _now_iso()}
 
-        # Recurring tasks record *which* window was completed so they reappear
-        # once the window rolls over.
-        if task.get("recurrence_type", "none") != "none":
+        if task.get("answer_mode") == "yesno":
+            if decision not in ("yes", "no"):
+                raise ValueError("A decision task requires a 'yes' or 'no' decision")
+            set_parts.append("last_decision = :decision")
+            expr_values[":decision"] = decision
+
+        # Record which window was completed so recurring / triggered tasks
+        # reappear once their window rolls over. One-shot untriggered tasks have
+        # no window (key ""), and rely on last_completed_at alone.
+        window_key = completion_window_key(tasks, task_id, tz, now)
+        if window_key:
             set_parts.append("last_completed_window = :window")
-            expr_values[":window"] = current_window_key(task, now_local)
+            expr_values[":window"] = window_key
 
         response = self.tasks_table.update_item(
             Key={"user_id": user_id, "task_id": task_id},
@@ -1161,7 +1224,12 @@ class TaskService:
             ReturnValues="ALL_NEW",
         )
         logger.info(f"Completed task: {task_id} for user: {user_id}")
-        return self._with_status(response["Attributes"], tz, now)
+        # Re-resolve against the partition so a triggered task's status reflects
+        # its (now possibly changed) dependency state.
+        updated = self._deserialize_task(response["Attributes"])
+        others = [t for t in tasks if t.get("task_id") != task_id]
+        resolved = resolve_tasks(others + [updated], tz, now)
+        return next(t for t in resolved if t.get("task_id") == task_id)
 
     def uncomplete_task(
         self, user_id: str, task_id: str, tz: Optional[str] = None, now: Optional[Any] = None
@@ -1173,12 +1241,16 @@ class TaskService:
 
         response = self.tasks_table.update_item(
             Key={"user_id": user_id, "task_id": task_id},
-            UpdateExpression="SET updated_at = :updated_at REMOVE last_completed_at, last_completed_window",
+            UpdateExpression=(
+                "SET updated_at = :updated_at "
+                "REMOVE last_completed_at, last_completed_window, last_decision"
+            ),
             ExpressionAttributeValues={":updated_at": _now_iso()},
             ReturnValues="ALL_NEW",
         )
         logger.info(f"Uncompleted task: {task_id} for user: {user_id}")
-        return self._with_status(response["Attributes"], tz, now)
+        # Re-resolve so dependents of this decision reflect its cleared state.
+        return self.get_task(user_id, task_id, tz)
 
     def delete_task(self, user_id: str, task_id: str) -> bool:
         """Delete a task for a specific user.
@@ -1221,6 +1293,79 @@ class TaskService:
                     datetime.fromisoformat(value)
                 except (TypeError, ValueError):
                     raise ValueError(f"Invalid {label}: must be an ISO-8601 date")
+
+    @staticmethod
+    def _validate_answer_mode(answer_mode: Any) -> str:
+        """Validate a task's answer mode, defaulting None to ``checkbox``."""
+        if answer_mode is None:
+            return "checkbox"
+        if answer_mode not in ("checkbox", "yesno"):
+            raise ValueError("answer_mode must be 'checkbox' or 'yesno'")
+        return answer_mode
+
+    def _validate_trigger(
+        self, user_id: str, trigger: Any, self_task_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Validate a task trigger, returning a normalized dict or None.
+
+        Checks the shape, that the source task exists and (for yes/no branches)
+        is itself a decision task, and — on update, when ``self_task_id`` is
+        known — that the dependency chain does not cycle back to this task.
+        """
+        if trigger is None:
+            return None
+        if not isinstance(trigger, dict):
+            raise ValueError("trigger must be an object")
+
+        source_id = trigger.get("source_task_id")
+        if not source_id or not isinstance(source_id, str):
+            raise ValueError("trigger.source_task_id is required")
+        if source_id == self_task_id:
+            raise ValueError("A task cannot trigger on itself")
+
+        on = trigger.get("on", "any")
+        if on not in TRIGGER_ON:
+            raise ValueError(f"trigger.on must be one of {sorted(TRIGGER_ON)}")
+
+        deadline = trigger.get("deadline", "same_day")
+        if deadline not in TRIGGER_DEADLINES:
+            raise ValueError(f"trigger.deadline must be one of {sorted(TRIGGER_DEADLINES)}")
+
+        clean: Dict[str, Any] = {"source_task_id": source_id, "on": on, "deadline": deadline}
+        if deadline == "offset":
+            offset = trigger.get("offset_days")
+            if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+                raise ValueError(
+                    "trigger.offset_days must be a non-negative integer for an offset deadline"
+                )
+            clean["offset_days"] = offset
+
+        source = self.tasks_table.get_item(
+            Key={"user_id": user_id, "task_id": source_id}
+        ).get("Item")
+        if source is None:
+            raise ValueError("trigger.source_task_id does not reference an existing task")
+        if on in ("yes", "no") and source.get("answer_mode") != "yesno":
+            raise ValueError(
+                "A yes/no trigger requires the source task to be a decision (yesno) task"
+            )
+
+        # Cycle guard (update path): walk the source's own trigger chain.
+        if self_task_id is not None:
+            seen = set()
+            cursor = source.get("trigger", {}).get("source_task_id") if source.get("trigger") else None
+            while cursor:
+                if cursor == self_task_id:
+                    raise ValueError("trigger would create a dependency cycle")
+                if cursor in seen:
+                    break
+                seen.add(cursor)
+                node = self.tasks_table.get_item(
+                    Key={"user_id": user_id, "task_id": cursor}
+                ).get("Item")
+                cursor = node.get("trigger", {}).get("source_task_id") if node and node.get("trigger") else None
+
+        return clean
 
 
 class ReportService:
@@ -1612,6 +1757,22 @@ class ReportGenerator:
         # Web app base URL for links back from Slack (e.g. task/item deep links).
         self.app_base_url = app_base_url
 
+    def render_sections(
+        self, report: Dict[str, Any], tz: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Render a report's section rules into snapshots against live data.
+
+        The pure render step shared by ``generate`` (which persists + delivers)
+        and the live ``/reports/<id>/preview`` endpoint (which does neither, so
+        answering a decision on the report page can re-fetch the next round of
+        newly-activated tasks).
+        """
+        user_id = report["user_id"]
+        return [
+            render_section(section, user_id, self, tz)
+            for section in report.get("sections", [])
+        ]
+
     def generate(
         self, report: Dict[str, Any], tz: Optional[str] = None, now: Optional[Any] = None
     ) -> Dict[str, Any]:
@@ -1620,10 +1781,7 @@ class ReportGenerator:
         Advances the report's next_run / last_run_at. Returns the created message.
         """
         user_id = report["user_id"]
-        rendered_sections = [
-            render_section(section, user_id, self, tz)
-            for section in report.get("sections", [])
-        ]
+        rendered_sections = self.render_sections(report, tz)
         message = self.message_service.create_message(
             user_id=user_id,
             title=report.get("name", "Report"),

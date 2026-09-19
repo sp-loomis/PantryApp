@@ -55,4 +55,15 @@ describe('completeTask', () => {
     expect(body).toBeUndefined();
     expect('tz' in options.query).toBe(true);
   });
+
+  it('sends a decision in the body when answering a decision task', async () => {
+    post.mockResolvedValue({ task: { task_id: 'a', done: true, last_decision: 'yes' } });
+
+    const result = await completeTask('a', 'yes');
+
+    expect(result.last_decision).toBe('yes');
+    const [path, body] = post.mock.calls[0];
+    expect(path).toBe('/tasks/a/complete');
+    expect(body).toEqual({ decision: 'yes' });
+  });
 });

@@ -37,8 +37,26 @@ describe('resolveTaskRow', () => {
       done: true,
       computed_status: 'done',
       current_due: '2026-09-25',
+      answer_mode: 'checkbox',
+      last_decision: null,
       exists: true,
     });
+  });
+
+  it('surfaces answer_mode and last_decision for a decision task (live-preferred)', () => {
+    const decisionSnap = { task_id: 'd1', name: 'Let horses out?', answer_mode: 'yesno' };
+    const state = buildTaskState([
+      { task_id: 'd1', done: true, answer_mode: 'yesno', last_decision: 'yes' },
+    ]);
+    const row = resolveTaskRow(decisionSnap, state);
+    expect(row.answer_mode).toBe('yesno');
+    expect(row.last_decision).toBe('yes');
+  });
+
+  it('defaults answer_mode to checkbox and last_decision to null', () => {
+    const row = resolveTaskRow(snapshot, buildTaskState([]));
+    expect(row.answer_mode).toBe('checkbox');
+    expect(row.last_decision).toBeNull();
   });
 
   it('falls back to the snapshot and flags exists=false when the task is gone', () => {

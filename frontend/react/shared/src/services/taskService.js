@@ -41,7 +41,11 @@ export async function getTask(taskId) {
 
 /**
  * Create a task.
- * @param {{name, notes?, tags?, recurrence_type?, recurrence_interval?, anchor_date?, due_date?, graceful?}} payload
+ * @param {{name, notes?, tags?, recurrence_type?, recurrence_interval?, anchor_date?, due_date?, graceful?, answer_mode?, trigger?}} payload
+ *   answer_mode: 'checkbox' | 'yesno' (a decision task)
+ *   trigger (optional dependency on another task's decision):
+ *     { source_task_id, on: 'yes'|'no'|'any',
+ *       deadline: 'same_day'|'same_week'|'offset', offset_days? }
  */
 export async function createTask(payload) {
   const data = await api.post('/tasks', payload, { query: { tz: clientTz() } });
@@ -57,9 +61,15 @@ export async function deleteTask(taskId) {
   return api.del(`/tasks/${taskId}`);
 }
 
-/** Mark a task complete for its current window. */
-export async function completeTask(taskId) {
-  const data = await api.post(`/tasks/${taskId}/complete`, undefined, { query: { tz: clientTz() } });
+/**
+ * Mark a task complete / answer a decision for its current window.
+ * @param {string} taskId
+ * @param {'yes'|'no'} [decision] - required for a `yesno` (decision) task,
+ *   ignored for a plain checkbox task.
+ */
+export async function completeTask(taskId, decision) {
+  const body = decision ? { decision } : undefined;
+  const data = await api.post(`/tasks/${taskId}/complete`, body, { query: { tz: clientTz() } });
   return data.task;
 }
 

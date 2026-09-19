@@ -78,6 +78,23 @@ export default function TasksDashboardPage() {
     }
   };
 
+  // Answer a decision task Yes/No (clicking the current answer clears it).
+  const handleAnswer = async (task, decision) => {
+    setTogglingId(task.task_id);
+    try {
+      if (task.done && task.last_decision === decision) {
+        await uncompleteTask(task.task_id);
+      } else {
+        await completeTask(task.task_id, decision);
+      }
+      await load();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   const active = tasks.filter((t) => t.active);
   const groups = groupActiveTasks(active);
   // Recurring tasks done for the current window — a bounded set that resets, so
@@ -127,6 +144,7 @@ export default function TasksDashboardPage() {
                       key={task.task_id}
                       task={task}
                       onToggleComplete={handleToggle}
+                      onAnswer={handleAnswer}
                       isToggling={togglingId === task.task_id}
                     />
                   ))}
@@ -151,6 +169,7 @@ export default function TasksDashboardPage() {
                     key={task.task_id}
                     task={task}
                     onToggleComplete={handleToggle}
+                    onAnswer={handleAnswer}
                     isToggling={togglingId === task.task_id}
                   />
                 ))}

@@ -815,6 +815,8 @@ def create_task():
             anchor_date=data.get('anchor_date'),
             due_date=data.get('due_date'),
             graceful=data.get('graceful', True),
+            answer_mode=data.get('answer_mode', 'checkbox'),
+            trigger=data.get('trigger'),
             tz=_current_tz(),
         )
         metrics.add_metric(name="TaskCreated", unit="Count", value=1)
@@ -863,10 +865,16 @@ def list_tasks():
 @app.post("/tasks/<task_id>/complete")
 @tracer.capture_method
 def complete_task(task_id: str):
-    """Mark a task complete for its current window."""
+    """Mark a task complete / answer a decision for its current window.
+
+    A ``yesno`` (decision) task requires a ``{"decision": "yes"|"no"}`` body.
+    """
     try:
         user_id = _current_user_id()
-        task = task_service.complete_task(user_id, task_id, tz=_current_tz())
+        data = app.current_event.json_body or {}
+        task = task_service.complete_task(
+            user_id, task_id, decision=data.get('decision'), tz=_current_tz()
+        )
         if task is None:
             return {"error": "Task not found"}, 404
         metrics.add_metric(name="TaskCompleted", unit="Count", value=1)
@@ -877,6 +885,9 @@ def complete_task(task_id: str):
     except PermissionError as e:
         logger.warning(f"Permission denied: {str(e)}")
         return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error completing task: {str(e)}")
+        return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error completing task")
         return {"error": str(e)}, 500
@@ -1060,6 +1071,33 @@ def run_report(report_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error running report")
+        return {"error": str(e)}, 500
+
+
+@app.post("/reports/<report_id>/preview")
+@tracer.capture_method
+def preview_report(report_id: str):
+    """Render a report's sections live, without persisting or delivering.
+
+    Used by the interactive report page: after answering a decision, the page
+    re-renders the report to surface the next round of newly-activated tasks.
+    Returns the rendered sections in the same shape as a message's ``sections``.
+    """
+    try:
+        user_id = _current_user_id()
+        report = report_service.get_report(user_id, report_id)
+        if not report:
+            return {"error": "Report not found"}, 404
+        sections = report_generator.render_sections(report, tz=_current_tz())
+        return {"sections": sections}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error previewing report")
         return {"error": str(e)}, 500
 
 

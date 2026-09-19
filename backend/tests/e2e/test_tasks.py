@@ -202,3 +202,55 @@ def test_tasks_scoped_per_user(api):
 def test_unauthenticated_request_returns_401(api):
     resp = api.call("GET", "/tasks", user=None, query=UTC)
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Decision paths: yes/no decisions and triggered dependents
+# ---------------------------------------------------------------------------
+
+def _decision(api, name):
+    return api.call("POST", "/tasks", body={"name": name, "answer_mode": "yesno"},
+                    query=UTC).body["task"]
+
+
+def _trigger_task(api, name, source_id, on):
+    return api.call("POST", "/tasks", body={
+        "name": name,
+        "trigger": {"source_task_id": source_id, "on": on, "deadline": "same_day"},
+    }, query=UTC).body["task"]
+
+
+def test_decision_yes_activates_yes_branch(api):
+    src = _decision(api, "Let horses out?")
+    clean = _trigger_task(api, "Clean stalls", src["task_id"], "yes")
+    lunch = _trigger_task(api, "Give lunch", src["task_id"], "no")
+
+    # Both dependents start dormant.
+    active = {t["task_id"] for t in api.call("GET", "/tasks", query={"tz": "UTC", "status": "active"}).body["tasks"]}
+    assert clean["task_id"] not in active and lunch["task_id"] not in active
+
+    # Answer Yes.
+    resp = api.call("POST", f"/tasks/{src['task_id']}/complete", body={"decision": "yes"}, query=UTC)
+    assert resp.status_code == 200
+    assert resp.body["task"]["last_decision"] == "yes"
+
+    active = {t["task_id"] for t in api.call("GET", "/tasks", query={"tz": "UTC", "status": "active"}).body["tasks"]}
+    assert clean["task_id"] in active
+    assert lunch["task_id"] not in active
+
+
+def test_decision_no_activates_no_branch(api):
+    src = _decision(api, "Let horses out?")
+    clean = _trigger_task(api, "Clean stalls", src["task_id"], "yes")
+    lunch = _trigger_task(api, "Give lunch", src["task_id"], "no")
+
+    api.call("POST", f"/tasks/{src['task_id']}/complete", body={"decision": "no"}, query=UTC)
+    active = {t["task_id"] for t in api.call("GET", "/tasks", query={"tz": "UTC", "status": "active"}).body["tasks"]}
+    assert lunch["task_id"] in active
+    assert clean["task_id"] not in active
+
+
+def test_decision_without_choice_is_rejected(api):
+    src = _decision(api, "Decide?")
+    resp = api.call("POST", f"/tasks/{src['task_id']}/complete", query=UTC)
+    assert resp.status_code == 400

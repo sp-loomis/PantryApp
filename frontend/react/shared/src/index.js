@@ -59,7 +59,8 @@ export {
   createReport,
   updateReport,
   deleteReport,
-  runReport
+  runReport,
+  previewReport
 } from './services/reportService.js';
 export {
   listMessages,

@@ -29,9 +29,13 @@ export function buildTaskState(tasks = []) {
  * (deleted since the report ran), we fall back to the snapshot and flag it so
  * the UI can disable its checkbox instead of firing a request that 404s.
  *
+ * `answer_mode`/`last_decision` (live-preferred) let the UI pick the right
+ * control — a Yes/No button pair for a `yesno` decision task, a checkbox
+ * otherwise — and show which way a decision was answered.
+ *
  * @param {object} item - the snapshot task dict from message.sections[].content.items
  * @param {Map<string, object>} taskState - live tasks by id
- * @returns {{task_id, name, done, computed_status, current_due, exists}}
+ * @returns {{task_id, name, done, computed_status, current_due, answer_mode, last_decision, exists}}
  */
 export function resolveTaskRow(item, taskState) {
   const live = taskState?.get(item.task_id);
@@ -42,6 +46,8 @@ export function resolveTaskRow(item, taskState) {
     done: Boolean(source.done),
     computed_status: source.computed_status,
     current_due: source.current_due,
+    answer_mode: source.answer_mode || 'checkbox',
+    last_decision: source.last_decision ?? null,
     exists: Boolean(live),
   };
 }

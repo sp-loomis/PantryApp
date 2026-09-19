@@ -81,3 +81,86 @@ def test_list_tasks_legacy_scalar_tag_still_filters(task_service):
     task_service.create_task(USER, "B", tags=["garden"], tz="UTC")
     got = task_service.list_tasks(USER, tz="UTC", status="all", tag="garden")
     assert [t["name"] for t in got] == ["B"]
+
+
+# ---------------------------------------------------------------------------
+# Decision paths: decision tasks + triggers
+# ---------------------------------------------------------------------------
+
+def test_decision_task_requires_yes_or_no(task_service):
+    t = task_service.create_task(USER, "Let horses out?", answer_mode="yesno",
+                                 recurrence_type="daily", tz="UTC")
+    tid = t["task_id"]
+    with pytest.raises(ValueError):
+        task_service.complete_task(USER, tid, tz="UTC", now=DAY1)  # no decision
+    answered = task_service.complete_task(USER, tid, decision="yes", tz="UTC", now=DAY1)
+    assert answered["done"] is True
+    assert answered["last_decision"] == "yes"
+
+
+def test_yes_branch_activates_dependent(task_service):
+    # One-shot decision keeps the test date-stable (list_tasks uses the real clock).
+    src = task_service.create_task(USER, "Let horses out?", answer_mode="yesno", tz="UTC")
+    dep = task_service.create_task(
+        USER, "Clean stalls", tz="UTC",
+        trigger={"source_task_id": src["task_id"], "on": "yes", "deadline": "same_day"},
+    )
+    # Dormant until the decision is made.
+    assert task_service.get_task(USER, dep["task_id"], tz="UTC")["active"] is False
+
+    task_service.complete_task(USER, src["task_id"], decision="yes", tz="UTC")
+    active = [t["task_id"] for t in task_service.list_tasks(USER, tz="UTC", status="active")]
+    assert dep["task_id"] in active
+
+
+def test_no_branch_leaves_yes_dependent_dormant(task_service):
+    src = task_service.create_task(USER, "Let horses out?", answer_mode="yesno", tz="UTC")
+    yes_dep = task_service.create_task(
+        USER, "Clean stalls", tz="UTC",
+        trigger={"source_task_id": src["task_id"], "on": "yes", "deadline": "same_day"})
+    no_dep = task_service.create_task(
+        USER, "Give lunch", tz="UTC",
+        trigger={"source_task_id": src["task_id"], "on": "no", "deadline": "same_day"})
+
+    task_service.complete_task(USER, src["task_id"], decision="no", tz="UTC")
+    active = {t["task_id"] for t in task_service.list_tasks(USER, tz="UTC", status="active")}
+    assert no_dep["task_id"] in active
+    assert yes_dep["task_id"] not in active
+
+
+def test_trigger_source_must_exist(task_service):
+    with pytest.raises(ValueError):
+        task_service.create_task(USER, "orphan", tz="UTC",
+                                 trigger={"source_task_id": "nope", "on": "any",
+                                          "deadline": "same_day"})
+
+
+def test_yesno_trigger_requires_decision_source(task_service):
+    plain = task_service.create_task(USER, "plain checkbox", tz="UTC")
+    with pytest.raises(ValueError):
+        task_service.create_task(USER, "dep", tz="UTC",
+                                 trigger={"source_task_id": plain["task_id"], "on": "yes",
+                                          "deadline": "same_day"})
+
+
+def test_offset_deadline_requires_offset_days(task_service):
+    src = task_service.create_task(USER, "decide?", answer_mode="yesno",
+                                   recurrence_type="daily", tz="UTC")
+    with pytest.raises(ValueError):
+        task_service.create_task(USER, "dep", tz="UTC",
+                                 trigger={"source_task_id": src["task_id"], "on": "yes",
+                                          "deadline": "offset"})
+
+
+def test_trigger_cycle_rejected_on_update(task_service):
+    a = task_service.create_task(USER, "A", answer_mode="yesno",
+                                 recurrence_type="daily", tz="UTC")
+    b = task_service.create_task(
+        USER, "B", answer_mode="yesno", tz="UTC",
+        trigger={"source_task_id": a["task_id"], "on": "yes", "deadline": "same_day"})
+    # Point A at B -> cycle A->B->A.
+    with pytest.raises(ValueError):
+        task_service.update_task(
+            USER, a["task_id"],
+            {"trigger": {"source_task_id": b["task_id"], "on": "yes", "deadline": "same_day"}},
+            tz="UTC")

@@ -14,7 +14,7 @@ vi.mock('./apiClient.js', () => ({
   },
 }));
 
-const { listReports, createReport, updateReport, runReport, deleteReport } =
+const { listReports, createReport, updateReport, runReport, previewReport, deleteReport } =
   await import('./reportService.js');
 
 beforeEach(() => {
@@ -60,6 +60,18 @@ describe('runReport', () => {
     expect(result).toEqual({ message_id: 'm1' });
     const [path, body, options] = post.mock.calls[0];
     expect(path).toBe('/reports/r1/run');
+    expect(body).toBeUndefined();
+    expect('tz' in options.query).toBe(true);
+  });
+});
+
+describe('previewReport', () => {
+  it('posts to the preview endpoint with a tz and returns the sections', async () => {
+    post.mockResolvedValue({ sections: [{ type: 'task_query', content: { items: [] } }] });
+    const result = await previewReport('r1');
+    expect(result).toEqual([{ type: 'task_query', content: { items: [] } }]);
+    const [path, body, options] = post.mock.calls[0];
+    expect(path).toBe('/reports/r1/preview');
     expect(body).toBeUndefined();
     expect('tz' in options.query).toBe(true);
   });

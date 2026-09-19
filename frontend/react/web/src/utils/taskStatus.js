@@ -19,6 +19,9 @@ export function taskStatusBadge(task) {
       return { label: days === 1 ? 'Tomorrow' : `${days}d left`, color: 'orange' };
     case 'done':
       return { label: 'Done', color: 'green' };
+    case 'dormant':
+      // Triggered task waiting on its source decision (see backend/recurrence.py).
+      return { label: 'Waiting', color: 'purple' };
     case 'upcoming':
     default:
       return days != null ? { label: `${days}d`, color: 'gray' } : { label: 'Someday', color: 'gray' };

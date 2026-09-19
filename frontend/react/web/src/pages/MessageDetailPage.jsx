@@ -3,10 +3,15 @@
  * task check-off.
  *
  * Unlike the static message log (`MessageLogPage`), the task rows here are
- * checkboxes that complete/uncomplete the underlying task. The message's task
- * snapshots are frozen, but on load we overlay the *live* task state
- * (`listTasks`) so checkboxes read true even if a task changed after the report
- * ran. Membership (which tasks the report listed) stays frozen. Web-only —
+ * interactive: a checkbox for a plain task, a Yes/No pair for a decision task.
+ * We overlay the *live* task state (`listTasks`) so rows read true even if a
+ * task changed after the report ran.
+ *
+ * Decision paths: answering a decision can activate a new round of dependent
+ * tasks. When the message came from a report (`report_id`), we re-render that
+ * report live (`previewReport`) after each answer so the next round appears in
+ * place — membership is no longer frozen. A manual message with no report_id
+ * keeps the frozen snapshot and only overlays live per-task state. Web-only —
  * Slack delivery stays static.
  */
 
@@ -19,6 +24,7 @@ import {
   markRead,
   completeTask,
   uncompleteTask,
+  previewReport,
 } from '@pantry-app/shared';
 import PageHeader from '../components/PageHeader';
 import MessageSections from '../components/MessageSections';
@@ -67,41 +73,68 @@ export default function MessageDetailPage() {
     load();
   }, [load]);
 
-  // Toggle the live task behind a report row. Optimistic; reconciles to the
-  // task returned by the API, reverts on failure.
-  const handleToggleTask = useCallback(
-    async (row) => {
-      const id = row.task_id;
+  // After a mutation, re-render the source report (if any) so a newly answered
+  // decision reveals/hides its dependent tasks, and refresh live task state.
+  // A manual message (no report_id) keeps its frozen membership.
+  const refreshRound = useCallback(async () => {
+    const reportId = message?.report_id;
+    const [sections, tasks] = await Promise.all([
+      reportId ? previewReport(reportId).catch(() => null) : Promise.resolve(null),
+      listTasks({ status: 'all' }),
+    ]);
+    setTaskState(buildTaskState(tasks));
+    if (sections) setMessage((m) => (m ? { ...m, sections } : m));
+  }, [message?.report_id]);
+
+  // Run a task mutation optimistically, reconcile, then refresh the round.
+  const runMutation = useCallback(
+    async (id, optimistic, mutate) => {
       const prev = taskState.get(id);
-      if (!prev) return; // deleted task — checkbox is disabled, shouldn't fire
+      if (!prev) return; // deleted task — control is disabled, shouldn't fire
       setTogglingId(id);
       setError(null);
-      // Optimistic flip.
-      setTaskState((s) => {
-        const next = new Map(s);
-        next.set(id, { ...prev, done: !prev.done });
-        return next;
-      });
+      setTaskState((s) => new Map(s).set(id, { ...prev, ...optimistic }));
       try {
-        const updated = prev.done ? await uncompleteTask(id) : await completeTask(id);
-        setTaskState((s) => {
-          const next = new Map(s);
-          next.set(id, updated);
-          return next;
-        });
+        const updated = await mutate();
+        setTaskState((s) => new Map(s).set(id, updated));
+        await refreshRound();
       } catch (err) {
-        // Revert to the pre-toggle task on failure.
-        setTaskState((s) => {
-          const next = new Map(s);
-          next.set(id, prev);
-          return next;
-        });
+        setTaskState((s) => new Map(s).set(id, prev)); // revert
         setError(err);
       } finally {
         setTogglingId(null);
       }
     },
-    [taskState],
+    [taskState, refreshRound],
+  );
+
+  // Checkbox row: toggle completion.
+  const handleToggleTask = useCallback(
+    (row) => {
+      const prev = taskState.get(row.task_id);
+      if (!prev) return;
+      return runMutation(
+        row.task_id,
+        { done: !prev.done },
+        () => (prev.done ? uncompleteTask(row.task_id) : completeTask(row.task_id)),
+      );
+    },
+    [taskState, runMutation],
+  );
+
+  // Decision row: answer Yes/No (clicking the current answer clears it).
+  const handleAnswerTask = useCallback(
+    (row, decision) => {
+      const prev = taskState.get(row.task_id);
+      if (!prev) return;
+      const clearing = prev.last_decision === decision && prev.done;
+      return runMutation(
+        row.task_id,
+        clearing ? { done: false, last_decision: null } : { done: true, last_decision: decision },
+        () => (clearing ? uncompleteTask(row.task_id) : completeTask(row.task_id, decision)),
+      );
+    },
+    [taskState, runMutation],
   );
 
   if (loading) {
@@ -148,6 +181,7 @@ export default function MessageDetailPage() {
           interactive
           taskState={taskState}
           onToggleTask={handleToggleTask}
+          onAnswerTask={handleAnswerTask}
           togglingId={togglingId}
         />
       </Box>

@@ -24,6 +24,7 @@ import {
   useDisclosure,
 } from '@chakra-ui/react';
 import { getTask, deleteTask, completeTask, uncompleteTask } from '@pantry-app/shared';
+import DecisionButtons from '../components/DecisionButtons';
 import PageHeader from '../components/PageHeader';
 import ErrorMessage from '../components/ErrorMessage';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -73,6 +74,22 @@ export default function TaskDetailPage() {
     try {
       setToggling(true);
       const updated = task.done ? await uncompleteTask(taskId) : await completeTask(taskId);
+      setTask(updated);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  // Answer a decision task Yes/No (clicking the current answer clears it).
+  const handleAnswer = async (decision) => {
+    try {
+      setToggling(true);
+      const clearing = task.done && task.last_decision === decision;
+      const updated = clearing
+        ? await uncompleteTask(taskId)
+        : await completeTask(taskId, decision);
       setTask(updated);
     } catch (err) {
       setError(err);
@@ -192,15 +209,25 @@ export default function TaskDetailPage() {
       </Card>
 
       <Flex mt={4} gap={3} direction={{ base: 'column', md: 'row' }}>
-        <Button
-          onClick={handleToggle}
-          isLoading={toggling}
-          colorScheme={task.done ? 'gray' : 'brand'}
-          variant={task.done ? 'outline' : 'solid'}
-          width={{ base: 'full', md: 'auto' }}
-        >
-          {task.done ? 'Mark not done' : 'Mark done'}
-        </Button>
+        {task.answer_mode === 'yesno' ? (
+          <DecisionButtons
+            decision={task.last_decision}
+            isDisabled={toggling}
+            onAnswer={handleAnswer}
+            name={task.name}
+            size="md"
+          />
+        ) : (
+          <Button
+            onClick={handleToggle}
+            isLoading={toggling}
+            colorScheme={task.done ? 'gray' : 'brand'}
+            variant={task.done ? 'outline' : 'solid'}
+            width={{ base: 'full', md: 'auto' }}
+          >
+            {task.done ? 'Mark not done' : 'Mark done'}
+          </Button>
+        )}
         <Button
           as={RouterLink}
           to={`/tasks/${taskId}/edit`}

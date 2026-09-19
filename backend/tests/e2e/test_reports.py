@@ -178,3 +178,43 @@ def test_create_report_rejects_bad_delivery(api):
     body["delivery"] = {"slack": {"connection_id": ""}}
     resp = api.call("POST", "/reports", body=body)
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /reports/<id>/preview — live re-render (decision paths)
+# ---------------------------------------------------------------------------
+
+def test_preview_renders_live_without_persisting_a_message(api):
+    # A report over active tasks.
+    report = api.call("POST", "/reports", body=_report_body(sections=[
+        {"type": "task_query", "heading": "To do", "config": {"status": "active"}},
+    ])).body["report"]
+
+    # A decision + a Yes-branch dependent (dormant until answered).
+    src = api.call("POST", "/tasks", body={"name": "Let horses out?", "answer_mode": "yesno"},
+                   query=UTC).body["task"]
+    dep = api.call("POST", "/tasks", body={
+        "name": "Clean stalls",
+        "trigger": {"source_task_id": src["task_id"], "on": "yes", "deadline": "same_day"},
+    }, query=UTC).body["task"]
+
+    msgs_before = len(api.call("GET", "/messages").body["messages"])
+
+    # Preview before answering: dependent absent.
+    r1 = api.call("POST", f"/reports/{report['report_id']}/preview", query=UTC)
+    assert r1.status_code == 200
+    ids = {t["task_id"] for t in r1.body["sections"][0]["content"]["items"]}
+    assert src["task_id"] in ids and dep["task_id"] not in ids
+
+    # Answer Yes, then preview again: the next round now includes the dependent.
+    api.call("POST", f"/tasks/{src['task_id']}/complete", body={"decision": "yes"}, query=UTC)
+    r2 = api.call("POST", f"/reports/{report['report_id']}/preview", query=UTC)
+    ids = {t["task_id"] for t in r2.body["sections"][0]["content"]["items"]}
+    assert dep["task_id"] in ids
+
+    # Preview never persisted a message.
+    assert len(api.call("GET", "/messages").body["messages"]) == msgs_before
+
+
+def test_preview_missing_report_404(api):
+    assert api.call("POST", "/reports/nope/preview", query=UTC).status_code == 404

@@ -25,6 +25,7 @@ import {
   getTask,
   createTask,
   updateTask,
+  listTasks,
   validateTaskName,
   validateRecurrence,
 } from '@pantry-app/shared';
@@ -32,6 +33,7 @@ import PageHeader from '../components/PageHeader';
 import ErrorMessage from '../components/ErrorMessage';
 import RecurrenceField from '../components/RecurrenceField';
 import TagInput from '../components/TagInput';
+import TaskTriggerBuilder from '../components/TaskTriggerBuilder';
 
 const EMPTY_RECURRENCE = { recurrence_type: 'none', recurrence_interval: 2, anchor_date: '' };
 
@@ -46,6 +48,9 @@ export default function TaskFormPage() {
   const [recurrence, setRecurrence] = useState({ ...EMPTY_RECURRENCE });
   const [dueDate, setDueDate] = useState('');
   const [graceful, setGraceful] = useState(true);
+  const [answerMode, setAnswerMode] = useState('checkbox');
+  const [trigger, setTrigger] = useState(null);
+  const [candidates, setCandidates] = useState([]);
 
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(isEdit);
@@ -53,6 +58,14 @@ export default function TaskFormPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const isOneShot = recurrence.recurrence_type === 'none';
+  const hasTrigger = Boolean(trigger?.source_task_id);
+
+  // Candidate source tasks for the trigger builder (everything but this task).
+  useEffect(() => {
+    listTasks({ status: 'all' })
+      .then((all) => setCandidates(all.filter((t) => t.task_id !== taskId)))
+      .catch(() => setCandidates([]));
+  }, [taskId]);
 
   const loadExisting = useCallback(async () => {
     try {
@@ -69,6 +82,8 @@ export default function TaskFormPage() {
       });
       setDueDate(task.due_date ? task.due_date.slice(0, 10) : '');
       setGraceful(task.graceful ?? true);
+      setAnswerMode(task.answer_mode || 'checkbox');
+      setTrigger(task.trigger || null);
     } catch (err) {
       setError(err);
     } finally {
@@ -100,13 +115,17 @@ export default function TaskFormPage() {
       tags,
       recurrence_type: recurrence.recurrence_type,
       graceful,
+      answer_mode: answerMode,
+      // null clears any existing trigger (edit); an incomplete builder is treated as none.
+      trigger: hasTrigger ? trigger : null,
     };
     if (recurrence.recurrence_type === 'interval') {
       payload.recurrence_interval = recurrence.recurrence_interval;
       payload.anchor_date = recurrence.anchor_date || null;
     }
-    // A due date only applies to one-shot tasks; clear it otherwise.
-    payload.due_date = isOneShot ? dueDate || null : null;
+    // A due date only applies to a one-shot task without a trigger; a triggered
+    // task derives its due date from the source's decision.
+    payload.due_date = isOneShot && !hasTrigger ? dueDate || null : null;
 
     try {
       setSubmitting(true);
@@ -159,7 +178,25 @@ export default function TaskFormPage() {
             )}
           </Box>
 
-          {isOneShot && (
+          <FormControl>
+            <Checkbox
+              isChecked={answerMode === 'yesno'}
+              onChange={(e) => setAnswerMode(e.target.checked ? 'yesno' : 'checkbox')}
+              colorScheme="brand"
+            >
+              This is a decision (Yes / No)
+            </Checkbox>
+            <FormHelperText>
+              Answer it with a Yes/No button pair. Other tasks can be triggered by the answer.
+            </FormHelperText>
+          </FormControl>
+
+          <FormControl>
+            <FormLabel>Depends on a decision</FormLabel>
+            <TaskTriggerBuilder value={trigger} tasks={candidates} onChange={setTrigger} />
+          </FormControl>
+
+          {isOneShot && !hasTrigger && (
             <>
               <FormControl>
                 <FormLabel>Due date</FormLabel>

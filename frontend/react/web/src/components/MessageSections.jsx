@@ -12,6 +12,7 @@ import { Link as RouterLink } from 'react-router-dom';
 
 import { formatDate } from '../utils/dates';
 import { resolveTaskRow } from '../utils/reportTasks';
+import DecisionButtons from './DecisionButtons';
 
 /** Trim trailing zeros off an aggregate value for display (mirrors slack_blocks). */
 function formatTotal(value) {
@@ -60,13 +61,16 @@ function TextContent({ content }) {
  * emoji, and date label for the row.
  *
  * When `interactive` (task sections only, on the single-report page), the
- * leading emoji cell is replaced with a checkbox that completes/uncompletes the
- * real task. Row state (checked, emoji, due) is driven by the live task via
- * `taskState`; `onToggleTask(row)` is called on change and `togglingId` disables
- * the in-flight row. A task missing from `taskState` (deleted since the report
- * ran) shows a disabled checkbox reflecting the snapshot.
+ * leading emoji cell becomes a completion control for the real task: a checkbox
+ * for a plain task, or a Yes/No button pair for a `yesno` decision task. Row
+ * state (checked/answer, emoji, due) is driven by the live task via `taskState`;
+ * `onToggleTask(row)` fires for a checkbox and `onAnswerTask(row, decision)` for
+ * a decision, with `togglingId` disabling the in-flight row. A task missing from
+ * `taskState` (deleted since the report ran) shows a disabled control.
  */
-function ItemsTable({ content, emptyLabel, isTask, interactive, taskState, onToggleTask, togglingId }) {
+function ItemsTable({
+  content, emptyLabel, isTask, interactive, taskState, onToggleTask, onAnswerTask, togglingId,
+}) {
   const items = content?.items || [];
   if (items.length === 0) {
     return (
@@ -89,10 +93,18 @@ function ItemsTable({ content, emptyLabel, isTask, interactive, taskState, onTog
           const emoji = isTask ? STATUS_EMOJI[status] || DEFAULT_BULLET : DEFAULT_BULLET;
           const dueValue = isTask ? (row ? row.current_due : item.current_due) : item.use_by_date;
           const due = formatDate(dueValue);
+          const isDecision = isInteractive && row.answer_mode === 'yesno';
           return (
             <Tr key={id} fontSize="sm">
-              <Td px={0} py={1} width="1.75em" verticalAlign="top">
-                {isInteractive ? (
+              <Td px={0} py={1} width={isDecision ? 'auto' : '1.75em'} verticalAlign="top">
+                {isDecision ? (
+                  <DecisionButtons
+                    decision={row.last_decision}
+                    isDisabled={!row.exists || togglingId === id}
+                    onAnswer={(decision) => onAnswerTask?.(row, decision)}
+                    name={row.name}
+                  />
+                ) : isInteractive ? (
                   <Checkbox
                     isChecked={done}
                     isDisabled={!row.exists || togglingId === id}
@@ -126,7 +138,7 @@ function ItemsTable({ content, emptyLabel, isTask, interactive, taskState, onTog
   );
 }
 
-function SectionBody({ section, interactive, taskState, onToggleTask, togglingId }) {
+function SectionBody({ section, interactive, taskState, onToggleTask, onAnswerTask, togglingId }) {
   switch (section.type) {
     case 'custom_message':
       return <TextContent content={section.content} />;
@@ -139,6 +151,7 @@ function SectionBody({ section, interactive, taskState, onToggleTask, togglingId
           interactive={interactive}
           taskState={taskState}
           onToggleTask={onToggleTask}
+          onAnswerTask={onAnswerTask}
           togglingId={togglingId}
         />
       );
@@ -163,13 +176,15 @@ function SectionBody({ section, interactive, taskState, onToggleTask, togglingId
  * @param {boolean} [interactive] - render task rows as completion checkboxes
  * @param {Map<string, object>} [taskState] - live tasks by id (interactive mode)
  * @param {(row: object) => void} [onToggleTask] - called when a task checkbox toggles
- * @param {string|null} [togglingId] - task_id currently mutating (disables its checkbox)
+ * @param {(row: object, decision: 'yes'|'no') => void} [onAnswerTask] - called when a decision is answered
+ * @param {string|null} [togglingId] - task_id currently mutating (disables its control)
  */
 export default function MessageSections({
   sections = [],
   interactive = false,
   taskState,
   onToggleTask,
+  onAnswerTask,
   togglingId,
 }) {
   if (sections.length === 0) {
@@ -193,6 +208,7 @@ export default function MessageSections({
             interactive={interactive}
             taskState={taskState}
             onToggleTask={onToggleTask}
+            onAnswerTask={onAnswerTask}
             togglingId={togglingId}
           />
         </Box>

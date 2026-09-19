@@ -64,3 +64,16 @@ export async function runReport(reportId) {
   });
   return data.message;
 }
+
+/**
+ * Re-render a report's sections against live data, without persisting a message
+ * or delivering to Slack. Used by the interactive report page to surface the
+ * next round of tasks after a decision is answered.
+ * @returns rendered sections in the same shape as `message.sections`.
+ */
+export async function previewReport(reportId) {
+  const data = await api.post(`/reports/${reportId}/preview`, undefined, {
+    query: { tz: clientTz() },
+  });
+  return data.sections;
+}

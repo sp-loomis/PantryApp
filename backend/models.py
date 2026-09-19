@@ -174,6 +174,20 @@ class Task:
       self-hides from active views instead of nagging as overdue.
     - ``last_completed_window`` / ``last_completed_at``: current-state
       completion markers (no history is kept).
+    - ``answer_mode``: ``checkbox`` (plain done/not-done) or ``yesno`` (a
+      *decision* — completing it records a Yes/No answer in ``last_decision``).
+    - ``last_decision``: ``yes``/``no``/None — the current-window (or one-shot)
+      answer to a decision task, recorded alongside the completion markers. No
+      history is kept, mirroring ``last_completed_window``.
+    - ``trigger``: an optional dependency on another task's decision. When set the
+      task is *dormant* until its source is answered a matching way, and it
+      borrows the source's recurrence window for activation and completion-reset.
+      See ``recurrence.py`` for the resolution logic. Shape::
+
+          { "source_task_id": str,
+            "on": "yes" | "no" | "any",
+            "deadline": "same_day" | "same_week" | "offset",
+            "offset_days": int }   # required only when deadline == "offset"
     """
     user_id: str
     task_id: str
@@ -187,6 +201,9 @@ class Task:
     graceful: bool = True  # one-shot: self-hide once past due
     last_completed_window: Optional[str] = None  # recurring: window key last completed
     last_completed_at: Optional[str] = None  # last completion timestamp
+    answer_mode: str = "checkbox"  # checkbox | yesno (decision task)
+    last_decision: Optional[str] = None  # yes | no | None (decision answer)
+    trigger: Optional[dict] = None  # dependency on another task's decision
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -202,6 +219,8 @@ class Task:
         anchor_date: Optional[str] = None,
         due_date: Optional[str] = None,
         graceful: bool = True,
+        answer_mode: str = "checkbox",
+        trigger: Optional[dict] = None,
     ) -> "Task":
         """Create a new Task instance."""
         return cls(
@@ -215,6 +234,8 @@ class Task:
             anchor_date=anchor_date,
             due_date=due_date,
             graceful=graceful,
+            answer_mode=answer_mode,
+            trigger=trigger,
         )
 
     def to_dict(self) -> dict:
@@ -236,6 +257,9 @@ class Task:
             "graceful": self.graceful,
             "last_completed_window": self.last_completed_window,
             "last_completed_at": self.last_completed_at,
+            "answer_mode": self.answer_mode,
+            "last_decision": self.last_decision,
+            "trigger": self.trigger,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

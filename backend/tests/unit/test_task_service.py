@@ -152,6 +152,21 @@ def test_offset_deadline_requires_offset_days(task_service):
                                           "deadline": "offset"})
 
 
+def test_update_adds_trigger_and_answer_mode(task_service):
+    # `trigger` is a DynamoDB reserved word — updating it must use an alias.
+    src = task_service.create_task(USER, "Let horses out?", answer_mode="yesno", tz="UTC")
+    dep = task_service.create_task(USER, "Clean stalls", tz="UTC")
+    updated = task_service.update_task(
+        USER, dep["task_id"],
+        {"trigger": {"source_task_id": src["task_id"], "on": "yes", "deadline": "same_day"}},
+        tz="UTC")
+    assert updated["trigger"]["source_task_id"] == src["task_id"]
+
+    # And clearing it REMOVEs the attribute.
+    cleared = task_service.update_task(USER, dep["task_id"], {"trigger": None}, tz="UTC")
+    assert cleared["trigger"] is None
+
+
 def test_trigger_cycle_rejected_on_update(task_service):
     a = task_service.create_task(USER, "A", answer_mode="yesno",
                                  recurrence_type="daily", tz="UTC")

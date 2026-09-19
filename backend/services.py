@@ -1133,12 +1133,14 @@ class TaskService:
                 expr_values[f":{field_name}"] = updates[field_name]
 
         if "trigger" in updates:
+            # `trigger` is a DynamoDB reserved word, so alias it via #trigger.
             # Clearing a trigger REMOVEs it (back to a plain task); setting one
             # SETs the validated dict.
+            expr_names["#trigger"] = "trigger"
             if updates["trigger"] is None:
-                remove_parts.append("trigger")
+                remove_parts.append("#trigger")
             else:
-                set_parts.append("trigger = :trigger")
+                set_parts.append("#trigger = :trigger")
                 expr_values[":trigger"] = updates["trigger"]
 
         if "tags" in updates:

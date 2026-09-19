@@ -1,12 +1,18 @@
 /**
  * TaskTriggerBuilder — configure a task's dependency on another task's decision.
  *
- * A triggered task stays dormant until its source task is answered a matching
- * way (Yes / No / either), then activates with a deadline relative to that
- * decision. Picking "— None —" clears the trigger (a plain, always-listed task).
+ * A triggered task stays dormant until its source *decision* task is answered a
+ * matching way (Yes / No / either), then activates with a deadline relative to
+ * that decision. Clearing the source select removes the trigger (a plain,
+ * always-listed task).
+ *
+ * The source is chosen from a searchable autocomplete (chakra-react-select, as
+ * elsewhere in the app), limited to decision tasks — the only tasks that can be
+ * answered Yes/No.
  *
  * `value` is the trigger object (or null); `onChange(next|null)` reports edits.
- * `tasks` are the candidate source tasks (self already excluded by the caller).
+ * `tasks` are the candidate source tasks (self already excluded by the caller);
+ * non-decision tasks are filtered out here.
  */
 
 import {
@@ -18,48 +24,48 @@ import {
   Input,
   Select,
 } from '@chakra-ui/react';
+import { Select as AutoComplete } from 'chakra-react-select';
 
 const DEFAULT_TRIGGER = { source_task_id: '', on: 'yes', deadline: 'same_day' };
 
 export default function TaskTriggerBuilder({ value, tasks = [], onChange }) {
   const trigger = value || DEFAULT_TRIGGER;
   const decisionTasks = tasks.filter((t) => t.answer_mode === 'yesno');
+  const options = decisionTasks.map((t) => ({ value: t.task_id, label: t.name }));
+  const selected = options.find((o) => o.value === trigger.source_task_id) || null;
 
   const patch = (changes) => {
     const next = { ...trigger, ...changes };
-    // A yes/no branch only makes sense off a decision source.
-    if ((next.on === 'yes' || next.on === 'no') && next.source_task_id) {
-      const src = tasks.find((t) => t.task_id === next.source_task_id);
-      if (src && src.answer_mode !== 'yesno') next.on = 'any';
-    }
     if (next.deadline !== 'offset') delete next.offset_days;
     else if (next.offset_days == null) next.offset_days = 1;
     onChange(next);
   };
 
-  const handleSource = (e) => {
-    const source_task_id = e.target.value;
-    if (!source_task_id) {
-      onChange(null); // "— None —" clears the trigger
+  const handleSource = (opt) => {
+    if (!opt) {
+      onChange(null); // cleared -> no trigger
       return;
     }
-    patch({ source_task_id });
+    patch({ source_task_id: opt.value });
   };
 
   return (
     <Box borderWidth="1px" borderColor="gray.200" borderRadius="md" p={3}>
       <FormControl>
         <FormLabel fontSize="sm">Trigger after another task&apos;s decision</FormLabel>
-        <Select value={trigger.source_task_id} onChange={handleSource} placeholder="— None —">
-          {tasks.map((t) => (
-            <option key={t.task_id} value={t.task_id}>
-              {t.name}
-              {t.answer_mode === 'yesno' ? ' (decision)' : ''}
-            </option>
-          ))}
-        </Select>
+        <AutoComplete
+          isClearable
+          options={options}
+          value={selected}
+          onChange={handleSource}
+          placeholder={decisionTasks.length ? 'Search decisions…' : 'No decision tasks yet'}
+          isDisabled={decisionTasks.length === 0}
+          size="sm"
+        />
         <FormHelperText>
-          This task stays hidden until the chosen task is answered.
+          {decisionTasks.length
+            ? 'This task stays hidden until the chosen decision is answered.'
+            : 'Create a Yes/No decision task first, then it can be chosen here.'}
         </FormHelperText>
       </FormControl>
 
@@ -95,12 +101,6 @@ export default function TaskTriggerBuilder({ value, tasks = [], onChange }) {
             </FormControl>
           )}
         </HStack>
-      )}
-
-      {(trigger.on === 'yes' || trigger.on === 'no') && decisionTasks.length === 0 && (
-        <FormHelperText color="orange.500">
-          A Yes/No trigger needs a decision task as its source.
-        </FormHelperText>
       )}
     </Box>
   );

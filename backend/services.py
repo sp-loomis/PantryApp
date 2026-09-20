@@ -1501,10 +1501,16 @@ class ReportService:
             expr_values[":name"] = updates["name"]
             expr_names["#n"] = "name"
 
-        for field_name in ("enabled", "sections", "delivery", "trigger"):
+        for field_name in ("enabled", "sections", "delivery"):
             if field_name in updates:
                 set_parts.append(f"{field_name} = :{field_name}")
                 expr_values[f":{field_name}"] = updates[field_name]
+
+        if "trigger" in updates:
+            # `trigger` is a DynamoDB reserved word, so alias it via #trigger.
+            set_parts.append("#trigger = :trigger")
+            expr_values[":trigger"] = updates["trigger"]
+            expr_names["#trigger"] = "trigger"
 
         if "schedule" in updates:
             set_parts.append("schedule = :schedule")

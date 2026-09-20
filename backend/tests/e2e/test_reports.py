@@ -61,6 +61,18 @@ def test_update_report(api):
     assert resp.body["report"]["name"] == "Renamed"
 
 
+def test_update_report_trigger(api):
+    # `trigger` is a DynamoDB reserved word; updating it must alias the name.
+    created = api.call("POST", "/reports", body=_report_body()).body["report"]
+    trigger = {"conditions": [{
+        "source": "task", "query": {"status": "active"}, "match": "all",
+        "inequalities": [{"operator": "above", "threshold": 3}],
+    }]}
+    resp = api.call("PUT", f"/reports/{created['report_id']}", body={"trigger": trigger})
+    assert resp.status_code == 200
+    assert resp.body["report"]["trigger"]["conditions"][0]["source"] == "task"
+
+
 def test_delete_report(api):
     created = api.call("POST", "/reports", body=_report_body()).body["report"]
     assert api.call("DELETE", f"/reports/{created['report_id']}").status_code == 200

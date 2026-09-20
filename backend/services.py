@@ -1037,6 +1037,20 @@ class TaskService:
                 return task
         return None
 
+    def list_all_task_tags(self, user_id: str) -> List[str]:
+        """List all distinct tags across a user's tasks (sorted).
+
+        Task tags are denormalized on the task record and stored lowercased at
+        create time, so no reverse index or extra normalization is needed here.
+        """
+        response = self.tasks_table.query(
+            KeyConditionExpression=Key("user_id").eq(user_id)
+        )
+        tags = set()
+        for task in response.get("Items", []):
+            tags.update(task.get("tags", []))
+        return sorted(tags)
+
     def _resolved_tasks(
         self, user_id: str, tz: Optional[str] = None, now: Optional[Any] = None
     ) -> List[Dict[str, Any]]:

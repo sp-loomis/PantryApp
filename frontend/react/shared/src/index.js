@@ -46,6 +46,7 @@ export {
 } from './services/categoryService.js';
 export {
   listTasks,
+  listTaskTags,
   getTask,
   createTask,
   updateTask,

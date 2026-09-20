@@ -10,7 +10,7 @@ vi.mock('./apiClient.js', () => ({
   },
 }));
 
-const { listTasks, completeTask } = await import('./taskService.js');
+const { listTasks, listTaskTags, completeTask } = await import('./taskService.js');
 
 describe('listTasks', () => {
   beforeEach(() => {
@@ -36,6 +36,22 @@ describe('listTasks', () => {
 
     const [, options] = get.mock.calls[0];
     expect('status' in options.query).toBe(false);
+  });
+});
+
+describe('listTaskTags', () => {
+  beforeEach(() => {
+    get.mockReset();
+  });
+
+  it('unwraps the tags envelope from the task-tags endpoint', async () => {
+    get.mockResolvedValue({ tags: ['chores', 'garden'] });
+
+    const result = await listTaskTags();
+
+    expect(result).toEqual(['chores', 'garden']);
+    const [path] = get.mock.calls[0];
+    expect(path).toBe('/task-tags');
   });
 });
 

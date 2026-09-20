@@ -33,6 +33,7 @@ import {
   createReport,
   updateReport,
   listTags,
+  listTaskTags,
   listConnections,
   validateReportName,
   validateSchedule,
@@ -110,7 +111,7 @@ function TagsFilter({ config, set, tagOptions }) {
 }
 
 /** Type-specific config editor for one section. */
-function SectionConfig({ section, onConfigChange, tagOptions }) {
+function SectionConfig({ section, onConfigChange, tagOptions, taskTagOptions }) {
   const { type, config } = section;
   const set = (key, value) => onConfigChange({ ...config, [key]: value });
 
@@ -141,7 +142,7 @@ function SectionConfig({ section, onConfigChange, tagOptions }) {
             <option value="all">All</option>
           </Select>
         </FormControl>
-        <TagsFilter config={config} set={set} tagOptions={tagOptions} />
+        <TagsFilter config={config} set={set} tagOptions={taskTagOptions} />
         <NameFilter config={config} set={set} />
       </VStack>
     );
@@ -202,12 +203,22 @@ export default function ReportFormPage() {
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [tagOptions, setTagOptions] = useState([]);
+  const [taskTagOptions, setTaskTagOptions] = useState([]);
 
-  // Load the user's tag list once for the tag multiselects.
+  // Load the user's item tag list once for the item-query tag multiselect.
   useEffect(() => {
     listTags()
       .then((all) => setTagOptions(all.map((t) => ({ value: t, label: t }))))
       .catch(() => setTagOptions([]));
+  }, []);
+
+  // Load the user's task tag list once for the task-query tag multiselect.
+  // Task tags live on task records, not the item tag index, so they need
+  // their own source (GET /task-tags).
+  useEffect(() => {
+    listTaskTags()
+      .then((all) => setTaskTagOptions(all.map((t) => ({ value: t, label: t }))))
+      .catch(() => setTaskTagOptions([]));
   }, []);
 
   // Load connected Slack workspaces for the delivery picker.
@@ -528,6 +539,7 @@ export default function ReportFormPage() {
                     section={section}
                     onConfigChange={(config) => updateSection(index, { config })}
                     tagOptions={tagOptions}
+                    taskTagOptions={taskTagOptions}
                   />
                   {fieldErrors[`section_${index}`] && (
                     <Text color="red.500" fontSize="sm" mt={1}>

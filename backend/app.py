@@ -862,6 +862,25 @@ def list_tasks():
         return {"error": str(e)}, 500
 
 
+@app.get("/task-tags")
+@tracer.capture_method
+def list_task_tags():
+    """List all distinct tags across the user's tasks."""
+    try:
+        user_id = _current_user_id()
+        tags = task_service.list_all_task_tags(user_id)
+        return {"tags": tags}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except Exception as e:
+        logger.exception("Error listing task tags")
+        return {"error": str(e)}, 500
+
+
 @app.post("/tasks/<task_id>/complete")
 @tracer.capture_method
 def complete_task(task_id: str):

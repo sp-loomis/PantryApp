@@ -117,6 +117,16 @@ def test_list_tasks_filters_by_tag(api):
     assert [t["name"] for t in tasks] == ["Garden task"]
 
 
+def test_list_task_tags_returns_distinct_sorted(api):
+    api.call("POST", "/tasks", body={"name": "Garden task", "tags": ["Garden", "outdoor"], "recurrence_type": "daily"}, query=UTC)
+    api.call("POST", "/tasks", body={"name": "Kitchen task", "tags": ["garden", "chores"], "recurrence_type": "daily"}, query=UTC)
+
+    resp = api.call("GET", "/task-tags", query=UTC)
+    assert resp.status_code == 200
+    # Tags are lowercased at create time; distinct and sorted.
+    assert resp.body["tags"] == ["chores", "garden", "outdoor"]
+
+
 # ---------------------------------------------------------------------------
 # Complete / uncomplete cycle
 # ---------------------------------------------------------------------------

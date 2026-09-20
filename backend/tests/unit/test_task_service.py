@@ -179,3 +179,16 @@ def test_trigger_cycle_rejected_on_update(task_service):
             USER, a["task_id"],
             {"trigger": {"source_task_id": b["task_id"], "on": "yes", "deadline": "same_day"}},
             tz="UTC")
+
+
+def test_list_all_task_tags_distinct_and_sorted(task_service):
+    task_service.create_task(USER, "Water plants", tags=["Garden", "outdoor"], tz="UTC")
+    task_service.create_task(USER, "Mow lawn", tags=["garden", "chores"], tz="UTC")
+    task_service.create_task(USER, "No tags", tz="UTC")
+
+    # Tags are lowercased at create time; the listing is the distinct, sorted set.
+    assert task_service.list_all_task_tags(USER) == ["chores", "garden", "outdoor"]
+
+
+def test_list_all_task_tags_empty_when_no_tasks(task_service):
+    assert task_service.list_all_task_tags("nobody") == []

@@ -34,6 +34,15 @@ export async function listTasks({ status = 'active', tag } = {}) {
   return data.tasks;
 }
 
+/**
+ * List all distinct tags across the user's tasks (sorted).
+ * @returns {Promise<string[]>}
+ */
+export async function listTaskTags() {
+  const data = await api.get('/task-tags');
+  return data.tags;
+}
+
 export async function getTask(taskId) {
   const data = await api.get(`/tasks/${taskId}`, { query: { tz: clientTz() } });
   return data.task;

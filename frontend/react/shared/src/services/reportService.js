@@ -38,10 +38,16 @@ export async function getReport(reportId) {
  *   sections: [{ type: 'custom_message'|'task_query'|'item_query', heading, config }]
  *   trigger (optional conditional gate — the report generates on schedule only when
  *     the trigger passes against live data; empty = always generate):
- *     { match: 'all'|'any',
- *       conditions: [{ query: { location_id?, tags?, name? },
- *                      match: 'all'|'any',
- *                      inequalities: [{ category_id, operator: 'below'|'above', threshold }] }] }
+ *     { match: 'all'|'any', conditions: [condition] } where a condition is either
+ *     an ITEM condition (source 'item', the default when omitted):
+ *       { source?: 'item', query: { location_id?, tags?, name?,
+ *                                   expires_within_days?, use_by_date_end? },
+ *         match: 'all'|'any',
+ *         inequalities: [{ category_id, operator: 'below'|'above', threshold }] }
+ *     or a TASK condition (fires on the matching-task count):
+ *       { source: 'task', query: { status?: 'active'|'done'|'all', tags?, name? },
+ *         match: 'all'|'any',
+ *         inequalities: [{ operator: 'below'|'above', threshold }] }
  */
 export async function createReport(payload) {
   const data = await api.post('/reports', payload);

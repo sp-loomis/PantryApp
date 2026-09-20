@@ -139,6 +139,40 @@ def test_scheduled_sweep_generates_due_reports(api):
     assert any(m["title"] == "Overdue digest" for m in listed.body["messages"])
 
 
+def test_sweep_task_trigger_gates_generation(api):
+    # One active task exists in the world.
+    api.call("POST", "/tasks", body={"name": "Buy milk", "recurrence_type": "daily"}, query=UTC)
+
+    # A report that only fires when active tasks exceed 0 -> should generate.
+    api.call("POST", "/reports", body={
+        "name": "Has tasks",
+        "schedule": DAILY,
+        "sections": [{"type": "custom_message", "config": {"text": "you have tasks"}}],
+        "trigger": {"conditions": [{
+            "source": "task", "query": {"status": "active"}, "match": "all",
+            "inequalities": [{"operator": "above", "threshold": 0}],
+        }]},
+    })
+    # A report that only fires when active tasks exceed 100 -> should be gated off.
+    api.call("POST", "/reports", body={
+        "name": "Too many tasks",
+        "schedule": DAILY,
+        "sections": [{"type": "custom_message", "config": {"text": "swamped"}}],
+        "trigger": {"conditions": [{
+            "source": "task", "query": {"status": "active"}, "match": "all",
+            "inequalities": [{"operator": "above", "threshold": 100}],
+        }]},
+    })
+
+    import app
+    from datetime import datetime, timezone
+    app.run_report_sweep(now=datetime(2030, 1, 1, tzinfo=timezone.utc))
+
+    titles = {m["title"] for m in api.call("GET", "/messages").body["messages"]}
+    assert "Has tasks" in titles
+    assert "Too many tasks" not in titles
+
+
 def test_handler_routes_scheduled_event_to_sweep(api):
     import app
     from tests.conftest import FakeLambdaContext

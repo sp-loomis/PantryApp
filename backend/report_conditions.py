@@ -10,7 +10,9 @@ Trigger shape (also documented on :class:`models.Report`)::
     {
       "match": "all" | "any",          # join across conditions (default "all")
       "conditions": [
+        # An ITEM condition (the default; "source" absent means "item").
         {
+          "source": "item",
           # same shape as item_query (incl. optional expiry filter)
           "query": { "location_id", "tags", "name",
                      "expires_within_days", "use_by_date_end" },
@@ -18,23 +20,36 @@ Trigger shape (also documented on :class:`models.Report`)::
           "inequalities": [
             { "category_id", "operator": "below"|"above", "threshold": <number> }
           ]
+        },
+        # A TASK condition: fires on the COUNT of matching tasks.
+        {
+          "source": "task",
+          # same shape as task_query
+          "query": { "status": "active"|"done"|"all", "tags", "name" },
+          "match": "all" | "any",
+          "inequalities": [
+            { "operator": "below"|"above", "threshold": <number> }  # no category_id
+          ]
         }
       ]
     }
 
-Each inequality compares a category's aggregate value — over the items matched by
-its condition's query — against ``threshold`` in the category's own unit (item
+An ITEM inequality compares a category's aggregate value — over the items matched
+by its condition's query — against ``threshold`` in the category's own unit (item
 count for a ``count`` category; summed measure in ``preferred_unit`` otherwise). A
-category with no matching items aggregates to 0. An empty/absent trigger passes.
+category with no matching items aggregates to 0. A TASK inequality compares the
+*number of tasks* matched by its condition's query against ``threshold``. An
+empty/absent trigger passes.
 """
 
 from typing import Any, Dict, List
 
 from dimensions import aggregate_by_category
-from report_sections import resolve_use_by_end, _validate_expiry
+from report_sections import resolve_use_by_end, _validate_expiry, _tags
 
 _MATCH_MODES = ("all", "any")
 _OPERATORS = ("below", "above")
+_TASK_STATUSES = ("active", "done", "all")
 
 
 def _join(results: List[bool], match: str) -> bool:
@@ -61,13 +76,29 @@ def _condition_aggregates(
     }
 
 
-def _evaluate_inequality(ineq: Dict[str, Any], aggregates: Dict[str, float]) -> bool:
-    """Evaluate one inequality against pre-computed category aggregates."""
-    value = aggregates.get(ineq.get("category_id"), 0)
+def _compare(value: float, ineq: Dict[str, Any]) -> bool:
+    """Apply one inequality's operator to a value against its threshold."""
     threshold = float(ineq.get("threshold", 0))
     if ineq.get("operator") == "above":
         return value > threshold
     return value < threshold  # "below"
+
+
+def _evaluate_inequality(ineq: Dict[str, Any], aggregates: Dict[str, float]) -> bool:
+    """Evaluate one item inequality against pre-computed category aggregates."""
+    return _compare(aggregates.get(ineq.get("category_id"), 0), ineq)
+
+
+def _task_count(condition: Dict[str, Any], user_id: str, services: Any) -> int:
+    """Run a task condition's query and return the number of matching tasks."""
+    query = condition.get("query") or {}
+    tasks = services.task_service.list_tasks(
+        user_id,
+        status=query.get("status") or None,
+        tags=_tags(query) or None,
+        name=query.get("name") or None,
+    )
+    return len(tasks)
 
 
 def _evaluate_condition(condition: Dict[str, Any], user_id: str, services: Any) -> bool:
@@ -76,16 +107,21 @@ def _evaluate_condition(condition: Dict[str, Any], user_id: str, services: Any) 
     if not inequalities:
         # No constraints -> AND is vacuously true, OR is vacuously false.
         return _join([], condition.get("match", "all"))
-    aggregates = _condition_aggregates(condition, user_id, services)
-    results = [_evaluate_inequality(i, aggregates) for i in inequalities]
+    if condition.get("source") == "task":
+        count = _task_count(condition, user_id, services)
+        results = [_compare(count, i) for i in inequalities]
+    else:
+        aggregates = _condition_aggregates(condition, user_id, services)
+        results = [_evaluate_inequality(i, aggregates) for i in inequalities]
     return _join(results, condition.get("match", "all"))
 
 
 def evaluate_trigger(trigger: Dict[str, Any], user_id: str, services: Any) -> bool:
     """Return whether a report's trigger passes against live data.
 
-    ``services`` exposes ``.item_service`` and ``.category_service`` (the
-    :class:`ReportGenerator` satisfies this). An empty/absent trigger passes.
+    ``services`` exposes ``.item_service``, ``.category_service`` and
+    ``.task_service`` (the :class:`ReportGenerator` satisfies this). An
+    empty/absent trigger passes.
     """
     if not trigger:
         return True
@@ -125,10 +161,23 @@ def validate_trigger(trigger: Any, valid_category_ids: Any = None) -> None:
             raise ValueError(
                 f"trigger.conditions[{i}].match must be one of {list(_MATCH_MODES)}"
             )
+        source = cond.get("source", "item")
+        if source not in ("item", "task"):
+            raise ValueError(
+                f"trigger.conditions[{i}].source must be 'item' or 'task'"
+            )
         query = cond.get("query")
         if query is not None and not isinstance(query, dict):
             raise ValueError(f"trigger.conditions[{i}].query must be an object")
-        if isinstance(query, dict):
+        if source == "task":
+            if isinstance(query, dict):
+                status = query.get("status")
+                if status is not None and status not in _TASK_STATUSES:
+                    raise ValueError(
+                        f"trigger.conditions[{i}].query.status must be one of "
+                        f"{list(_TASK_STATUSES)}"
+                    )
+        elif isinstance(query, dict):
             _validate_expiry(query, f"trigger.conditions[{i}].query")
 
         inequalities = cond.get("inequalities")
@@ -138,11 +187,14 @@ def validate_trigger(trigger: Any, valid_category_ids: Any = None) -> None:
             where = f"trigger.conditions[{i}].inequalities[{j}]"
             if not isinstance(ineq, dict):
                 raise ValueError(f"{where} must be an object")
-            category_id = ineq.get("category_id")
-            if not category_id or not isinstance(category_id, str):
-                raise ValueError(f"{where} requires a non-empty 'category_id'")
-            if valid_category_ids is not None and category_id not in valid_category_ids:
-                raise ValueError(f"{where} references unknown category {category_id!r}")
+            # Item inequalities are keyed by a category; task inequalities compare
+            # the raw task count and carry no category_id.
+            if source == "item":
+                category_id = ineq.get("category_id")
+                if not category_id or not isinstance(category_id, str):
+                    raise ValueError(f"{where} requires a non-empty 'category_id'")
+                if valid_category_ids is not None and category_id not in valid_category_ids:
+                    raise ValueError(f"{where} references unknown category {category_id!r}")
             if ineq.get("operator") not in _OPERATORS:
                 raise ValueError(f"{where}.operator must be one of {list(_OPERATORS)}")
             threshold = ineq.get("threshold")

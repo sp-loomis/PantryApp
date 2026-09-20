@@ -278,7 +278,7 @@ export default function ReportFormPage() {
     return schedule;
   };
 
-  /** Prune a condition query to non-empty fields only. */
+  /** Prune an item-condition query to non-empty fields only. */
   const cleanQuery = (query = {}) => {
     const out = {};
     if (query.location_id) out.location_id = query.location_id;
@@ -289,21 +289,45 @@ export default function ReportFormPage() {
     return out;
   };
 
+  /** Prune a task-condition query to non-empty fields only. */
+  const cleanTaskQuery = (query = {}) => {
+    const out = {};
+    if (query.status) out.status = query.status;
+    if (query.tags && query.tags.length) out.tags = query.tags;
+    if (query.name) out.name = query.name;
+    return out;
+  };
+
   /** Build the trigger payload, or {} (no gate) when there are no conditions. */
   const buildTrigger = () => {
     const conditions = trigger.conditions || [];
     if (conditions.length === 0) return {};
     return {
       match: trigger.match || 'all',
-      conditions: conditions.map((c) => ({
-        query: cleanQuery(c.query),
-        match: c.match || 'all',
-        inequalities: (c.inequalities || []).map((q) => ({
-          category_id: q.category_id,
-          operator: q.operator,
-          threshold: Number(q.threshold),
-        })),
-      })),
+      conditions: conditions.map((c) => {
+        const source = c.source === 'task' ? 'task' : 'item';
+        if (source === 'task') {
+          return {
+            source,
+            query: cleanTaskQuery(c.query),
+            match: c.match || 'all',
+            inequalities: (c.inequalities || []).map((q) => ({
+              operator: q.operator,
+              threshold: Number(q.threshold),
+            })),
+          };
+        }
+        return {
+          source,
+          query: cleanQuery(c.query),
+          match: c.match || 'all',
+          inequalities: (c.inequalities || []).map((q) => ({
+            category_id: q.category_id,
+            operator: q.operator,
+            threshold: Number(q.threshold),
+          })),
+        };
+      }),
     };
   };
 
@@ -332,10 +356,16 @@ export default function ReportFormPage() {
         errors[`section_${i}`] = 'Custom message needs some text';
       }
     });
-    // Each trigger inequality needs a category and a numeric threshold.
+    // Each trigger check needs a numeric threshold; item checks also need a category.
     (trigger.conditions || []).forEach((cond) => {
+      const isTask = cond.source === 'task';
       (cond.inequalities || []).forEach((q) => {
-        if (!q.category_id || q.threshold === '' || Number.isNaN(Number(q.threshold))) {
+        const badThreshold = q.threshold === '' || Number.isNaN(Number(q.threshold));
+        if (isTask) {
+          if (badThreshold) {
+            errors.trigger = 'Each task trigger check needs a numeric amount';
+          }
+        } else if (!q.category_id || badThreshold) {
           errors.trigger = 'Each trigger check needs a category and a numeric amount';
         }
       });
@@ -555,7 +585,12 @@ export default function ReportFormPage() {
 
           {/* Optional category-condition trigger */}
           <Box>
-            <TriggerBuilder value={trigger} onChange={setTrigger} tagOptions={tagOptions} />
+            <TriggerBuilder
+              value={trigger}
+              onChange={setTrigger}
+              tagOptions={tagOptions}
+              taskTagOptions={taskTagOptions}
+            />
             {fieldErrors.trigger && (
               <Text color="red.500" fontSize="sm" mt={2}>
                 {fieldErrors.trigger}

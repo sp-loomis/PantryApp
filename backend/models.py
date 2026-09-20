@@ -296,8 +296,12 @@ class Report:
     delivery: Dict[str, Any] = field(default_factory=dict)
     # Optional conditional gate. When non-empty, the sweep generates the report
     # only if the trigger evaluates true against live data. Shape:
-    # {"match": "all"|"any", "conditions": [{"query": {...}, "match": "all"|"any",
-    #  "inequalities": [{"category_id", "operator": "below"|"above", "threshold"}]}]}.
+    # {"match": "all"|"any", "conditions": [{"source": "item"|"task",
+    #  "query": {...}, "match": "all"|"any", "inequalities": [...]}]}. An "item"
+    # condition (the default when "source" is absent) has category-keyed
+    # inequalities {"category_id", "operator": "below"|"above", "threshold"}; a
+    # "task" condition fires on the matching-task count with inequalities
+    # {"operator", "threshold"} (no category_id).
     # Empty = no gate (fire on schedule). See report_conditions.evaluate_trigger.
     trigger: Dict[str, Any] = field(default_factory=dict)
     next_run: Optional[str] = None

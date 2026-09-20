@@ -4,12 +4,18 @@
  * A trigger gates report generation: on schedule, the report is generated only
  * when the trigger passes against live data. It is a two-level boolean:
  *   - a list of CONDITIONS joined by an outer all/any, each with
- *   - a query (which items to look at) + a list of INEQUALITIES on category
- *     aggregates, joined by an inner all/any.
+ *   - a query (what to look at) + a list of INEQUALITIES joined by an inner all/any.
+ *
+ * A condition has a `source`: an ITEM condition queries inventory and each
+ * inequality compares a CATEGORY aggregate; a TASK condition queries tasks and
+ * each inequality compares the COUNT of matching tasks (no category).
  *
  * Shape (see reportService.js / backend report_conditions.py):
- *   { match, conditions: [{ query: {location_id, tags, name}, match,
- *                           inequalities: [{category_id, operator, threshold}] }] }
+ *   { match, conditions: [
+ *       { source: 'item', query: {location_id, tags, name, ...}, match,
+ *         inequalities: [{category_id, operator, threshold}] },
+ *       { source: 'task', query: {status, tags, name}, match,
+ *         inequalities: [{operator, threshold}] } ] }
  *
  * With no conditions the report always generates on schedule.
  */
@@ -40,15 +46,34 @@ const MATCH_OPTIONS = [
   { value: 'any', label: 'ANY of' },
 ];
 
+const TASK_STATUS_OPTIONS = [
+  { value: 'active', label: 'active' },
+  { value: 'done', label: 'done' },
+  { value: 'all', label: 'all' },
+];
+
 function emptyInequality(categoryId = '') {
   return { category_id: categoryId, operator: 'below', threshold: '' };
 }
 
-function emptyCondition() {
-  return { query: {}, match: 'all', inequalities: [emptyInequality()] };
+// A task inequality compares the matching-task count, so it carries no category.
+function emptyTaskInequality() {
+  return { operator: 'above', threshold: '' };
 }
 
-export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
+function emptyCondition(source = 'item') {
+  if (source === 'task') {
+    return {
+      source: 'task',
+      query: { status: 'active' },
+      match: 'all',
+      inequalities: [emptyTaskInequality()],
+    };
+  }
+  return { source: 'item', query: {}, match: 'all', inequalities: [emptyInequality()] };
+}
+
+export default function TriggerBuilder({ value, onChange, tagOptions = [], taskTagOptions = [] }) {
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
@@ -65,8 +90,13 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
 
   const updateCondition = (i, patch) =>
     setConditions(conditions.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
-  const addCondition = () => setConditions([...conditions, emptyCondition()]);
+  const addCondition = () => setConditions([...conditions, emptyCondition('item')]);
   const removeCondition = (i) => setConditions(conditions.filter((_, idx) => idx !== i));
+
+  // Switching a condition's source resets its query + inequalities to that
+  // source's skeleton, so stale item/task keys don't leak across the change.
+  const changeSource = (ci, source) =>
+    setConditions(conditions.map((c, idx) => (idx === ci ? emptyCondition(source) : c)));
 
   const updateInequality = (ci, ii, patch) => {
     const cond = conditions[ci];
@@ -75,7 +105,8 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
   };
   const addInequality = (ci) => {
     const cond = conditions[ci];
-    updateCondition(ci, { inequalities: [...cond.inequalities, emptyInequality()] });
+    const blank = cond.source === 'task' ? emptyTaskInequality() : emptyInequality();
+    updateCondition(ci, { inequalities: [...cond.inequalities, blank] });
   };
   const removeInequality = (ci, ii) => {
     const cond = conditions[ci];
@@ -97,8 +128,9 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
         </Button>
       </Flex>
       <Text fontSize="xs" color="gray.400" mb={3}>
-        Only generate this report when category totals meet a condition (e.g. beef below
-        10 lb). Leave empty to always generate on schedule.
+        Only generate this report when a condition holds — on item category totals
+        (e.g. beef below 10 lb) or on a task count (e.g. more than 5 active tasks).
+        Leave empty to always generate on schedule.
       </Text>
 
       {conditions.length === 0 ? (
@@ -129,9 +161,21 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
           {conditions.map((cond, ci) => (
             <Box key={ci} borderWidth="1px" borderColor="gray.200" borderRadius="lg" p={3} bg="white">
               <Flex align="center" justify="space-between" mb={2}>
-                <Text fontSize="sm" fontWeight="semibold">
-                  Condition {ci + 1}
-                </Text>
+                <HStack spacing={2}>
+                  <Text fontSize="sm" fontWeight="semibold">
+                    Condition {ci + 1}
+                  </Text>
+                  <Select
+                    size="sm"
+                    maxW="110px"
+                    aria-label="Condition type"
+                    value={cond.source === 'task' ? 'task' : 'item'}
+                    onChange={(e) => changeSource(ci, e.target.value)}
+                  >
+                    <option value="item">Items</option>
+                    <option value="task">Tasks</option>
+                  </Select>
+                </HStack>
                 <IconButton
                   aria-label="Remove condition"
                   icon={<TrashIcon />}
@@ -142,7 +186,8 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
                 />
               </Flex>
 
-              {/* Query: which items to aggregate over. */}
+              {/* Item query: which items to aggregate over. */}
+              {cond.source !== 'task' && (
               <VStack align="stretch" spacing={2} mb={3}>
                 <FormControl>
                   <FormLabel fontSize="sm">Items in location (optional)</FormLabel>
@@ -202,8 +247,62 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
                   />
                 </FormControl>
               </VStack>
+              )}
 
-              {/* Inequalities on category aggregates. */}
+              {/* Task query: which tasks to count. */}
+              {cond.source === 'task' && (
+              <VStack align="stretch" spacing={2} mb={3}>
+                <FormControl>
+                  <FormLabel fontSize="sm">Task status</FormLabel>
+                  <Select
+                    size="sm"
+                    value={cond.query?.status || 'active'}
+                    onChange={(e) =>
+                      updateCondition(ci, {
+                        query: { ...cond.query, status: e.target.value },
+                      })
+                    }
+                  >
+                    {TASK_STATUS_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontSize="sm">Tags (optional)</FormLabel>
+                  <MultiSelect
+                    isMulti
+                    options={taskTagOptions}
+                    value={(cond.query?.tags || []).map((t) => ({ value: t, label: t }))}
+                    onChange={(opts) =>
+                      updateCondition(ci, {
+                        query: {
+                          ...cond.query,
+                          tags: opts && opts.length ? opts.map((o) => o.value) : undefined,
+                        },
+                      })
+                    }
+                    placeholder="Any tag"
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontSize="sm">Name contains (optional)</FormLabel>
+                  <Input
+                    value={cond.query?.name || ''}
+                    onChange={(e) =>
+                      updateCondition(ci, {
+                        query: { ...cond.query, name: e.target.value || undefined },
+                      })
+                    }
+                    placeholder="Partial name match"
+                  />
+                </FormControl>
+              </VStack>
+              )}
+
+              {/* Inequalities: category aggregates (item) or task count (task). */}
               {cond.inequalities.length > 1 && (
                 <HStack mb={2}>
                   <Text fontSize="sm">Match</Text>
@@ -226,19 +325,25 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
               <VStack align="stretch" spacing={2}>
                 {cond.inequalities.map((ineq, ii) => (
                   <HStack key={ii} align="center">
-                    <Select
-                      size="sm"
-                      flex="1"
-                      placeholder="Category"
-                      value={ineq.category_id}
-                      onChange={(e) => updateInequality(ci, ii, { category_id: e.target.value })}
-                    >
-                      {categories.map((c) => (
-                        <option key={c.category_id} value={c.category_id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </Select>
+                    {cond.source === 'task' ? (
+                      <Text fontSize="sm" flex="1">
+                        Task count
+                      </Text>
+                    ) : (
+                      <Select
+                        size="sm"
+                        flex="1"
+                        placeholder="Category"
+                        value={ineq.category_id}
+                        onChange={(e) => updateInequality(ci, ii, { category_id: e.target.value })}
+                      >
+                        {categories.map((c) => (
+                          <option key={c.category_id} value={c.category_id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
                     <Select
                       size="sm"
                       maxW="110px"
@@ -257,7 +362,7 @@ export default function TriggerBuilder({ value, onChange, tagOptions = [] }) {
                       placeholder="amount"
                     />
                     <Text fontSize="sm" color="gray.500" minW="3em">
-                      {unitFor(ineq.category_id)}
+                      {cond.source === 'task' ? 'tasks' : unitFor(ineq.category_id)}
                     </Text>
                     <IconButton
                       aria-label="Remove check"

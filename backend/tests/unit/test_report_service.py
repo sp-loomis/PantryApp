@@ -39,6 +39,36 @@ def test_create_report_rejects_bad_sections(report_service):
         report_service.create_report(USER, "bad", DAILY, sections=[{"type": "bogus"}])
 
 
+def test_create_report_accepts_task_trigger(report_service):
+    trigger = {
+        "match": "all",
+        "conditions": [{
+            "source": "task",
+            "query": {"status": "active", "tags": ["shopping"]},
+            "match": "all",
+            "inequalities": [{"operator": "above", "threshold": 5}],
+        }],
+    }
+    report = report_service.create_report(
+        USER, "Busy list", DAILY,
+        sections=[{"type": "custom_message", "config": {"text": "hi"}}],
+        trigger=trigger,
+    )
+    stored = report_service.get_report(USER, report["report_id"])
+    assert stored["trigger"]["conditions"][0]["source"] == "task"
+
+
+def test_create_report_rejects_unknown_category_in_item_trigger(report_service):
+    trigger = {
+        "conditions": [{
+            "source": "item", "query": {}, "match": "all",
+            "inequalities": [{"category_id": "ghost", "operator": "below", "threshold": 1}],
+        }],
+    }
+    with pytest.raises(ValueError):
+        report_service.create_report(USER, "bad", DAILY, trigger=trigger)
+
+
 def test_list_reports_scoped_to_user(report_service):
     report_service.create_report(USER, "mine", DAILY)
     report_service.create_report("other", "theirs", DAILY)

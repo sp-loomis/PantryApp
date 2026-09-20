@@ -6,13 +6,15 @@ from report_conditions import evaluate_trigger, validate_trigger
 
 
 class _FakeServices:
-    """Exposes item_service.search_items + category_service.list_categories."""
+    """Exposes item_service, category_service and task_service on one object."""
 
-    def __init__(self, items, categories):
+    def __init__(self, items, categories, tasks=None):
         self.item_service = self
         self.category_service = self
+        self.task_service = self
         self._items = items
         self._categories = categories
+        self._tasks = tasks or []
 
     def search_items(self, user_id, name=None, location_id=None, tags=None, use_by_date_end=None):
         self.last_end = use_by_date_end
@@ -20,6 +22,10 @@ class _FakeServices:
 
     def list_categories(self, user_id):
         return self._categories
+
+    def list_tasks(self, user_id, status=None, tags=None, name=None):
+        self.last_task_query = {"status": status, "tags": tags, "name": name}
+        return self._tasks
 
 
 def _services(beef_lb):
@@ -157,3 +163,88 @@ def test_condition_passes_resolved_expiry_end():
     trigger["conditions"][0]["query"] = {"expires_within_days": 3}
     evaluate_trigger(trigger, "u1", services)
     assert services.item_service.last_end == (date.today() + timedelta(days=3)).isoformat()
+
+
+# --- task conditions -----------------------------------------------------------
+
+def _task_services(task_count):
+    """A world with ``task_count`` matching tasks and no items/categories."""
+    return _FakeServices(items=[], categories=[], tasks=[{} for _ in range(task_count)])
+
+
+def _task_trigger(operator, threshold, query=None, match="all", outer="all"):
+    return {
+        "match": outer,
+        "conditions": [{
+            "source": "task",
+            "query": query or {"status": "active"},
+            "match": match,
+            "inequalities": [{"operator": operator, "threshold": threshold}],
+        }],
+    }
+
+
+def test_task_count_above_fires_when_over():
+    assert evaluate_trigger(_task_trigger("above", 5), "u1", _task_services(7)) is True
+    assert evaluate_trigger(_task_trigger("above", 5), "u1", _task_services(3)) is False
+
+
+def test_task_count_below_fires_when_under():
+    assert evaluate_trigger(_task_trigger("below", 5), "u1", _task_services(3)) is True
+    assert evaluate_trigger(_task_trigger("below", 5), "u1", _task_services(7)) is False
+
+
+def test_task_count_range_all_vs_any():
+    # count above 2 (True at 5) AND below 10 (True at 5) -> a range check.
+    def rng(match):
+        return {"conditions": [{
+            "source": "task", "query": {"status": "active"}, "match": match,
+            "inequalities": [
+                {"operator": "above", "threshold": 2},
+                {"operator": "above", "threshold": 100},
+            ],
+        }]}
+    assert evaluate_trigger(rng("all"), "u1", _task_services(5)) is False
+    assert evaluate_trigger(rng("any"), "u1", _task_services(5)) is True
+
+
+def test_task_condition_passes_query_through():
+    services = _task_services(4)
+    trigger = _task_trigger("above", 1, query={"status": "done", "tags": ["shopping"], "name": "milk"})
+    evaluate_trigger(trigger, "u1", services)
+    assert services.task_service.last_task_query == {
+        "status": "done", "tags": ["shopping"], "name": "milk",
+    }
+
+
+def test_task_empty_inequalities_vacuous():
+    t = {"conditions": [{"source": "task", "query": {}, "match": "all", "inequalities": []}]}
+    assert evaluate_trigger(t, "u1", _task_services(3)) is True
+    t["conditions"][0]["match"] = "any"
+    assert evaluate_trigger(t, "u1", _task_services(3)) is False
+
+
+def test_validate_accepts_task_condition_without_category():
+    validate_trigger(_task_trigger("above", 5))
+    # category_ids are irrelevant to task conditions.
+    validate_trigger(_task_trigger("above", 5), valid_category_ids={"c-beef"})
+
+
+def test_validate_rejects_bad_source():
+    t = _task_trigger("above", 5)
+    t["conditions"][0]["source"] = "widget"
+    with pytest.raises(ValueError):
+        validate_trigger(t)
+
+
+def test_validate_rejects_bad_task_status():
+    t = _task_trigger("above", 5, query={"status": "pending"})
+    with pytest.raises(ValueError):
+        validate_trigger(t)
+
+
+def test_validate_rejects_task_bad_operator_and_threshold():
+    with pytest.raises(ValueError):
+        validate_trigger(_task_trigger("between", 5))
+    with pytest.raises(ValueError):
+        validate_trigger(_task_trigger("above", "five"))

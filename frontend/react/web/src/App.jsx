@@ -14,6 +14,8 @@ import AppShell from './components/AppShell';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ConfirmPage from './pages/ConfirmPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import SearchPage from './pages/SearchPage';
 import LocationsPage from './pages/LocationsPage';
 import LocationDetailPage from './pages/LocationDetailPage';
@@ -56,6 +58,8 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/confirm" element={<ConfirmPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
             {/* Protected inventory app */}
             <Route element={<ProtectedLayout />}>

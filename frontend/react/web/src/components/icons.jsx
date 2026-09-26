@@ -20,6 +20,7 @@ import {
   FiPlay,
   FiSettings,
   FiSlack,
+  FiLogOut,
 } from 'react-icons/fi';
 import {
   RiSearch2Line,
@@ -47,3 +48,4 @@ export const ReportIcon = (props) => <Icon as={RiMegaphoneLine} {...props} />;
 export const CategoryIcon = (props) => <Icon as={RiStackLine} {...props} />;
 export const SettingsIcon = (props) => <Icon as={FiSettings} {...props} />;
 export const SlackIcon = (props) => <Icon as={FiSlack} {...props} />;
+export const LogoutIcon = (props) => <Icon as={FiLogOut} {...props} />;

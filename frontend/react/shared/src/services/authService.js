@@ -5,7 +5,15 @@
  * Works on both web and mobile platforms.
  */
 
-import { signUp, confirmSignUp, signIn, signOut, getCurrentUser } from 'aws-amplify/auth';
+import {
+  signUp,
+  confirmSignUp,
+  signIn,
+  signOut,
+  getCurrentUser,
+  resetPassword,
+  confirmResetPassword
+} from 'aws-amplify/auth';
 import { getAuthMode, LOCAL_DEV_USER } from '../config/env.js';
 
 /**
@@ -98,6 +106,51 @@ export async function signOutUser() {
     await signOut();
   } catch (error) {
     console.error('Sign out error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Start a forgot-password flow: Cognito emails a reset code to the user.
+ * @param {string} email - User's email address
+ * @returns {Promise<Object|null>} The nextStep descriptor, or null in local mode
+ * @throws {Error} If the request fails
+ */
+export async function requestPasswordReset(email) {
+  // Local dev-bypass mode has no Cognito user pool to reset against.
+  if (getAuthMode() === 'local') {
+    return null;
+  }
+  try {
+    const { nextStep } = await resetPassword({ username: email });
+    return nextStep;
+  } catch (error) {
+    console.error('Password reset request error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Complete a forgot-password flow with the emailed code and a new password.
+ * @param {string} email - User's email address
+ * @param {string} code - Reset code from email
+ * @param {string} newPassword - The new password to set
+ * @returns {Promise<void>}
+ * @throws {Error} If confirmation fails
+ */
+export async function confirmPasswordReset(email, code, newPassword) {
+  // Local dev-bypass mode has no Cognito user pool to reset against.
+  if (getAuthMode() === 'local') {
+    return;
+  }
+  try {
+    await confirmResetPassword({
+      username: email,
+      confirmationCode: code,
+      newPassword
+    });
+  } catch (error) {
+    console.error('Password reset confirmation error:', error);
     throw error;
   }
 }

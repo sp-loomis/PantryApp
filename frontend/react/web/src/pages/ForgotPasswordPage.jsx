@@ -1,7 +1,8 @@
 /**
- * Login Page
+ * Forgot Password Page
  *
- * User login with email and password.
+ * Step 1 of the reset flow: the user enters their email and Cognito emails a
+ * reset code. On success we forward to the reset page with the email prefilled.
  */
 
 import { useState } from 'react';
@@ -14,16 +15,18 @@ import {
   Button,
   VStack,
   Link,
-  Text
+  Text,
+  Alert,
+  AlertIcon
 } from '@chakra-ui/react';
 import { validateEmail } from '@pantry-app/shared';
 import { useAuthContext } from '../contexts/AuthContext';
 import AuthLayout from '../components/AuthLayout';
 import ErrorMessage from '../components/ErrorMessage';
 
-export default function LoginPage() {
+export default function ForgotPasswordPage() {
   const navigate = useNavigate();
-  const { login } = useAuthContext();
+  const { requestPasswordReset } = useAuthContext();
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -38,8 +41,10 @@ export default function LoginPage() {
       setIsSubmitting(true);
       setError(null);
 
-      await login(data.email, data.password);
-      navigate('/');
+      await requestPasswordReset(data.email);
+
+      // Forward to the reset page with the email prefilled.
+      navigate('/reset-password', { state: { email: data.email } });
     } catch (err) {
       setError(err);
     } finally {
@@ -48,7 +53,12 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthLayout title="Sign In">
+    <AuthLayout title="Reset Password">
+      <Alert status="info" borderRadius="md" mb={4}>
+        <AlertIcon />
+        Enter your email and we&apos;ll send you a reset code
+      </Alert>
+
       <ErrorMessage error={error} />
 
       <form onSubmit={handleSubmit(onSubmit)}>
@@ -70,40 +80,20 @@ export default function LoginPage() {
             )}
           </FormControl>
 
-          <FormControl isInvalid={errors.password}>
-            <FormLabel>Password</FormLabel>
-            <Input
-              type="password"
-              placeholder="Enter your password"
-              {...register('password', {
-                required: 'Password is required'
-              })}
-            />
-            {errors.password && (
-              <Text color="red.500" fontSize="sm" mt={1}>
-                {errors.password.message}
-              </Text>
-            )}
-          </FormControl>
-
           <Button
             type="submit"
             colorScheme="brand"
             width="full"
             isLoading={isSubmitting}
-            loadingText="Signing in..."
+            loadingText="Sending code..."
           >
-            Sign In
+            Send Reset Code
           </Button>
 
-          <Link as={RouterLink} to="/forgot-password" color="brand.500" fontSize="sm">
-            Forgot password?
-          </Link>
-
           <Text>
-            Don&apos;t have an account?{' '}
-            <Link as={RouterLink} to="/signup" color="brand.500">
-              Sign up
+            Remembered it?{' '}
+            <Link as={RouterLink} to="/login" color="brand.500">
+              Sign in
             </Link>
           </Text>
         </VStack>

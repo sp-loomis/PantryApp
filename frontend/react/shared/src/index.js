@@ -13,7 +13,9 @@ export {
   confirmUserSignUp,
   signInUser,
   signOutUser,
-  getCurrentAuthUser
+  getCurrentAuthUser,
+  requestPasswordReset,
+  confirmPasswordReset
 } from './services/authService.js';
 export { getAuthToken } from './services/authTokens.js';
 

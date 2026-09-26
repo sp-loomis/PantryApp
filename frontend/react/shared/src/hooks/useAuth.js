@@ -11,7 +11,9 @@ import {
   confirmUserSignUp,
   signInUser,
   signOutUser,
-  getCurrentAuthUser
+  getCurrentAuthUser,
+  requestPasswordReset,
+  confirmPasswordReset
 } from '../services/authService.js';
 
 /**
@@ -135,6 +137,42 @@ export function useAuth() {
   }, []);
 
   /**
+   * Start a forgot-password flow (Cognito emails a reset code)
+   */
+  const requestReset = useCallback(async (email) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const result = await requestPasswordReset(email);
+      return result;
+    } catch (err) {
+      setError(err.message || 'Password reset request failed');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  /**
+   * Complete a forgot-password flow with the emailed code and new password
+   */
+  const confirmReset = useCallback(async (email, code, newPassword) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const result = await confirmPasswordReset(email, code, newPassword);
+      return result;
+    } catch (err) {
+      setError(err.message || 'Password reset failed');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  /**
    * Clear error message
    */
   const clearError = useCallback(() => {
@@ -150,6 +188,8 @@ export function useAuth() {
     confirmSignup,
     login,
     logout,
+    requestPasswordReset: requestReset,
+    confirmPasswordReset: confirmReset,
     clearError,
     checkAuthStatus
   };

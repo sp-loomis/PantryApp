@@ -5,9 +5,11 @@
  * so future settings groups slot in beside it.
  */
 
-import { Link as RouterLink } from 'react-router-dom';
-import { Box, Flex, Heading, Text, VStack } from '@chakra-ui/react';
-import { SlackIcon, ChevronRightIcon } from '../components/icons';
+import { useState } from 'react';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Box, Button, Flex, Heading, Text, VStack } from '@chakra-ui/react';
+import { SlackIcon, ChevronRightIcon, LogoutIcon } from '../components/icons';
+import { useAuthContext } from '../contexts/AuthContext';
 
 const SETTINGS_ITEMS = [
   {
@@ -19,6 +21,20 @@ const SETTINGS_ITEMS = [
 ];
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
+  const { logout } = useAuthContext();
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    try {
+      setIsSigningOut(true);
+      await logout();
+      navigate('/login');
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
   return (
     <Box>
       <Text fontSize="2xl" fontWeight="bold" mb={4}>
@@ -55,6 +71,18 @@ export default function SettingsPage() {
           );
         })}
       </VStack>
+
+      <Button
+        mt={6}
+        leftIcon={<LogoutIcon boxSize={5} />}
+        colorScheme="red"
+        variant="outline"
+        onClick={handleSignOut}
+        isLoading={isSigningOut}
+        loadingText="Signing out..."
+      >
+        Sign out
+      </Button>
     </Box>
   );
 }

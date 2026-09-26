@@ -9,8 +9,8 @@
  * Tabs: Search · Locations · Tasks · Tags · [+ Add]
  */
 
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Box, Flex, HStack, VStack, Text, Heading } from '@chakra-ui/react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Box, Flex, HStack, VStack, Text, Heading, IconButton } from '@chakra-ui/react';
 import {
   SearchIcon,
   LocationIcon,
@@ -20,8 +20,10 @@ import {
   PlusIcon,
   ReportIcon,
   SettingsIcon,
+  LogoutIcon,
 } from './icons';
 import NotificationsMenu from './NotificationsMenu';
+import { useAuthContext } from '../contexts/AuthContext';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Search', icon: SearchIcon, end: true },
@@ -99,6 +101,13 @@ function BottomTab({ item, active }) {
 
 export default function AppShell() {
   const isActive = useIsActive();
+  const navigate = useNavigate();
+  const { logout } = useAuthContext();
+
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   return (
     <Flex minH="100vh" bg="gray.50">
@@ -140,8 +149,15 @@ export default function AppShell() {
         mx="auto"
       >
         {/* Top toolbar: notifications bell, reachable from anywhere in the app. */}
-        <Flex justify="flex-end" align="center" mb={{ base: 2, md: 4 }}>
+        <Flex justify="flex-end" align="center" gap={1} mb={{ base: 2, md: 4 }}>
           <NotificationsMenu />
+          <IconButton
+            aria-label="Sign out"
+            icon={<LogoutIcon boxSize={5} />}
+            variant="ghost"
+            color="gray.600"
+            onClick={handleSignOut}
+          />
         </Flex>
         <Outlet />
       </Box>

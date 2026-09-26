@@ -14,10 +14,27 @@ def _field_sections(blocks):
     return [b for b in blocks if b.get("type") == "section" and "fields" in b]
 
 
-def test_header_always_first():
+def test_title_block_is_bold_section_first():
+    # Slack header blocks can't hold links, so the title is a bold mrkdwn section.
     blocks = render_message_blocks("Daily Digest", [])
-    assert blocks[0]["type"] == "header"
-    assert blocks[0]["text"]["text"] == "Daily Digest"
+    assert blocks[0]["type"] == "section"
+    assert blocks[0]["text"]["type"] == "mrkdwn"
+    # No url/message_id -> bold plain title, not a link.
+    assert blocks[0]["text"]["text"] == "*Daily Digest*"
+
+
+def test_title_links_to_message_page():
+    blocks = render_message_blocks(
+        "Daily Digest", [], app_base_url=APP, message_id="m1"
+    )
+    assert blocks[0]["type"] == "section"
+    assert blocks[0]["text"]["text"] == "*<https://app.example.com/messages/m1|Daily Digest>*"
+
+
+def test_title_plain_when_message_id_missing():
+    # Base URL but no message id -> still no link.
+    blocks = render_message_blocks("Daily Digest", [], app_base_url=APP)
+    assert blocks[0]["text"]["text"] == "*Daily Digest*"
 
 
 def test_custom_message_renders_text():
@@ -37,7 +54,7 @@ def test_custom_message_escapes_mrkdwn():
     assert "&lt;" in flat and "&amp;" in flat and "&gt;" in flat
 
 
-def test_task_section_links_and_deadline():
+def test_task_section_plain_name_and_deadline():
     blocks = render_message_blocks("T", [
         {"type": "task_query", "heading": "Chores", "content": {
             "items": [
@@ -48,8 +65,9 @@ def test_task_section_links_and_deadline():
         }},
     ], app_base_url=APP)
     flat = str(blocks)
-    # Deep link back to the task.
-    assert "https://app.example.com/tasks/t1|Feed goats" in flat
+    # Rows are plain names in Slack — no deep link even with a base URL.
+    assert "Feed goats" in flat
+    assert "/tasks/t1|" not in flat
     # Slack native date token for the deadline (viewer-localized).
     assert "<!date^" in flat and "due" in flat
     # Overdue emoji present.
@@ -67,14 +85,15 @@ def test_task_without_app_url_shows_plain_name():
     assert "/tasks/t1|" not in flat  # no link without a base URL
 
 
-def test_item_section_links_and_use_by():
+def test_item_section_plain_name_and_use_by():
     blocks = render_message_blocks("T", [
         {"type": "item_query", "heading": "Low", "content": {
             "items": [{"name": "Milk", "item_id": "i1", "use_by_date": "2026-09-18"}], "count": 1,
         }},
     ], app_base_url=APP)
     flat = str(blocks)
-    assert "/items/i1|Milk" in flat
+    assert "Milk" in flat
+    assert "/items/i1|" not in flat  # rows are plain names in Slack
     assert "use by" in flat and "<!date^" in flat
 
 
@@ -95,9 +114,10 @@ def test_query_section_renders_two_column_fields_grid():
     # Two fields (name column + date column) per row.
     assert len(fields) == 4
     assert all(f["type"] == "mrkdwn" for f in fields)
-    # Row 1: emoji + link in the left field, deadline token in the right field.
+    # Row 1: emoji + plain name in the left field, deadline token in the right field.
     assert fields[0]["text"].startswith("⚠️ ")
-    assert "/tasks/t1|Feed goats" in fields[0]["text"]
+    assert fields[0]["text"] == "⚠️ Feed goats"
+    assert "/tasks/t1|" not in fields[0]["text"]
     assert "<!date^" in fields[1]["text"] and fields[1]["text"].startswith("due ")
     # Row 2: no deadline collapses to an em dash so columns stay aligned.
     assert fields[3]["text"] == "—"

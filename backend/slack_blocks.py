@@ -6,9 +6,11 @@ Consumes the SAME rendered message sections the in-app log stores —
 delivery and the message log show the same snapshot. This is the "Slack block
 renderer" anticipated in ``report_sections`` docstring.
 
-Task/item entries link back to the web app (when an ``app_base_url`` is given)
-and render deadlines with Slack's native date token so each viewer sees them in
-their own timezone/locale. The only entry point is ``render_message_blocks``.
+The report title links back to the report's in-app message page (when an
+``app_base_url`` and ``message_id`` are given); individual task/item rows render
+as plain names — deliberately unlike the web message page, which links each row.
+Deadlines use Slack's native date token so each viewer sees them in their own
+timezone/locale. The only entry point is ``render_message_blocks``.
 """
 
 from datetime import datetime, timezone
@@ -67,13 +69,6 @@ def _slack_date(iso: Optional[str]) -> Optional[str]:
     return f"<!date^{epoch}^{{date_short}}|{fallback}>"
 
 
-def _header(title: str) -> Dict[str, Any]:
-    return {
-        "type": "header",
-        "text": {"type": "plain_text", "text": _truncate(title or "Report", HEADER_MAX)},
-    }
-
-
 def _section(text: str) -> Dict[str, Any]:
     return {"type": "section", "text": {"type": "mrkdwn", "text": _truncate(text, SECTION_TEXT_MAX)}}
 
@@ -94,19 +89,33 @@ def _divider() -> Dict[str, Any]:
     return {"type": "divider"}
 
 
-def _link(name: str, path: Optional[str], app_base_url: str) -> str:
-    """A mrkdwn link back to the app, or the escaped name when no URL is set."""
-    label = _escape(str(name).strip() or "(unnamed)")
+def _link(label_text: str, path: Optional[str], app_base_url: str) -> str:
+    """A mrkdwn link back to the app, or the escaped label when no URL is set."""
+    label = _escape(str(label_text).strip() or "(unnamed)")
     if app_base_url and path:
         return f"<{app_base_url}{path}|{label}>"
     return label
 
 
-def _entry_fields(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, Any]]:
-    """Two mrkdwn fields per task/item — a name column (emoji + link) and a date
-    column — laid out by Slack as a 2-column grid.
+def _title_block(title: str, app_base_url: str, message_id: Optional[str]) -> Dict[str, Any]:
+    """The report title as a bold mrkdwn section link to its in-app message page.
 
-    The em dash marks a missing deadline so both columns stay aligned.
+    Slack ``header`` blocks are ``plain_text`` only and cannot embed a link, so the
+    title is a bold mrkdwn section instead. Falls back to the bold plain title when
+    no URL can be built (missing base URL or message id).
+    """
+    text = title or "Report"
+    path = f"/messages/{message_id}" if message_id else None
+    return _section(f"*{_link(_truncate(text, HEADER_MAX), path, app_base_url)}*")
+
+
+def _entry_fields(section: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Two mrkdwn fields per task/item — a name column (emoji + plain name) and a
+    date column — laid out by Slack as a 2-column grid.
+
+    Rows are plain names, not links: in Slack only the report title links back to
+    the app (the web message page links each row instead). The em dash marks a
+    missing deadline so both columns stay aligned.
     """
     content = section.get("content") or {}
     section_type = section.get("type")
@@ -114,17 +123,16 @@ def _entry_fields(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, 
     fields: List[Dict[str, Any]] = []
 
     for it in items[:LIST_ITEMS_MAX]:
+        name = _escape(str(it.get("name") or "").strip() or "(unnamed)")
         if section_type == "task_query":
             emoji = STATUS_EMOJI.get(it.get("computed_status"), DEFAULT_BULLET)
-            link = _link(it.get("name"), f"/tasks/{it.get('task_id')}", app_base_url)
             when = _slack_date(it.get("current_due"))
             date_text = f"due {when}" if when else "—"
         else:  # item_query
             emoji = DEFAULT_BULLET
-            link = _link(it.get("name"), f"/items/{it.get('item_id')}", app_base_url)
             when = _slack_date(it.get("use_by_date"))
             date_text = f"use by {when}" if when else "—"
-        fields.append(_field(f"{emoji} {link}"))
+        fields.append(_field(f"{emoji} {name}"))
         fields.append(_field(date_text))
 
     return fields
@@ -152,7 +160,7 @@ def _category_totals_block(content: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return _context("📊 " + "  ·  ".join(parts))
 
 
-def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[Dict[str, Any]]:
+def _render_section_blocks(section: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Render one report section into its (divider-led) block group."""
     blocks: List[Dict[str, Any]] = [_divider()]
     heading = (section.get("heading") or "").strip()
@@ -176,7 +184,7 @@ def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[D
             # Category totals may still be worth showing (e.g. an empty query with
             # a zeroed category), but with no items there are none — skip.
             return blocks
-        fields = _entry_fields(section, app_base_url)
+        fields = _entry_fields(section)
         # A section block holds at most 10 fields; split longer lists across
         # consecutive section blocks so the 2-column grid keeps flowing.
         for start in range(0, len(fields), FIELDS_PER_BLOCK):
@@ -197,20 +205,24 @@ def _render_section_blocks(section: Dict[str, Any], app_base_url: str) -> List[D
 
 
 def render_message_blocks(
-    title: str, sections: List[Dict[str, Any]], app_base_url: str = ""
+    title: str,
+    sections: List[Dict[str, Any]],
+    app_base_url: str = "",
+    message_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Render a report title + its rendered sections into Slack blocks.
 
-    ``app_base_url`` (e.g. https://app.example.com) makes task/item entries link
-    back to the app; empty renders plain names. Never raises on odd input; the
-    result is capped at Slack's 50-block limit with a trailing note when
-    sections had to be dropped.
+    ``app_base_url`` (e.g. https://app.example.com) plus ``message_id`` make the
+    report title link to its in-app message page; without them the title renders
+    plain. Task/item rows are always plain names in Slack (the web message page
+    links them instead). Never raises on odd input; the result is capped at
+    Slack's 50-block limit with a trailing note when sections had to be dropped.
     """
     app_base_url = (app_base_url or "").rstrip("/")
-    blocks: List[Dict[str, Any]] = [_header(title)]
+    blocks: List[Dict[str, Any]] = [_title_block(title, app_base_url, message_id)]
 
     for section in sections or []:
-        blocks.extend(_render_section_blocks(section, app_base_url))
+        blocks.extend(_render_section_blocks(section))
 
     if len(blocks) > MAX_BLOCKS:
         blocks = blocks[: MAX_BLOCKS - 1]

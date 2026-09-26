@@ -1833,7 +1833,10 @@ class ReportGenerator:
             return
         try:
             blocks = render_message_blocks(
-                message["title"], message.get("sections", []), self.app_base_url
+                message["title"],
+                message.get("sections", []),
+                self.app_base_url,
+                message_id=message["message_id"],
             )
             self.slack_service.post_message(
                 report["user_id"],

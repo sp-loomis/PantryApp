@@ -138,9 +138,7 @@ def create_tables(dynamodb) -> None:
         AttributeDefinitions=[
             {"AttributeName": "user_id", "AttributeType": "S"},
             {"AttributeName": "task_id", "AttributeType": "S"},
-            {"AttributeName": "due_date", "AttributeType": "S"},
         ],
-        GlobalSecondaryIndexes=[_gsi("DueDateIndex", "user_id", "due_date")],
     )
     _create(
         dynamodb,

@@ -159,19 +159,21 @@ class Item:
 
 @dataclass
 class Task:
-    """Task/chore model with support for one-shot and recurring schedules.
+    """Task model: cadence-based reminders and dateless to-dos.
 
-    A recurring task is stored as a single row plus a recurrence rule; its
-    status (and whether it is done "for now") is computed on read from the
-    current time, never materialized as per-occurrence rows. See
-    ``recurrence.py`` for the window/status logic.
+    Two kinds of task share this row:
 
-    - ``recurrence_type``: ``none`` (one-shot), ``daily``, ``weekly`` or
+    - A **reminder** (``recurrence_type`` ``daily``/``weekly``/``interval``) is
+      stored as a single row plus a recurrence rule; whether it is done "for
+      now" is computed on read from the current time, never materialized as
+      per-occurrence rows. It is present each window until marked off and resets
+      when the window rolls (a missed window never piles up). See
+      ``recurrence.py`` for the window logic.
+    - A **to-do** (``recurrence_type`` ``none``) has no date: it simply stays on
+      the active list until it is marked done.
+
+    - ``recurrence_type``: ``none`` (to-do), ``daily``, ``weekly`` or
       ``interval`` (every ``recurrence_interval`` days from ``anchor_date``).
-    - ``due_date``: one-shot deadline (ISO). Backs a sparse GSI, so it is
-      omitted from storage when unset (see ``TaskService``).
-    - ``graceful``: one-shot only — when True (default) a past-due task
-      self-hides from active views instead of nagging as overdue.
     - ``last_completed_window`` / ``last_completed_at``: current-state
       completion markers (no history is kept).
     - ``answer_mode``: ``checkbox`` (plain done/not-done) or ``yesno`` (a
@@ -197,8 +199,6 @@ class Task:
     recurrence_type: str = "none"  # none | daily | weekly | interval
     recurrence_interval: Optional[int] = None  # every N days, for interval tasks
     anchor_date: Optional[str] = None  # ISO date; window anchor for interval tasks
-    due_date: Optional[str] = None  # ISO; one-shot deadline (sparse GSI key)
-    graceful: bool = True  # one-shot: self-hide once past due
     last_completed_window: Optional[str] = None  # recurring: window key last completed
     last_completed_at: Optional[str] = None  # last completion timestamp
     answer_mode: str = "checkbox"  # checkbox | yesno (decision task)
@@ -217,8 +217,6 @@ class Task:
         recurrence_type: str = "none",
         recurrence_interval: Optional[int] = None,
         anchor_date: Optional[str] = None,
-        due_date: Optional[str] = None,
-        graceful: bool = True,
         answer_mode: str = "checkbox",
         trigger: Optional[dict] = None,
     ) -> "Task":
@@ -232,18 +230,12 @@ class Task:
             recurrence_type=recurrence_type,
             recurrence_interval=recurrence_interval,
             anchor_date=anchor_date,
-            due_date=due_date,
-            graceful=graceful,
             answer_mode=answer_mode,
             trigger=trigger,
         )
 
     def to_dict(self) -> dict:
-        """Convert to dictionary.
-
-        ``due_date`` is included as None for a stable response shape; the
-        service layer omits it from storage when unset (sparse-index rule).
-        """
+        """Convert to dictionary."""
         return {
             "user_id": self.user_id,
             "task_id": self.task_id,
@@ -253,8 +245,6 @@ class Task:
             "recurrence_type": self.recurrence_type,
             "recurrence_interval": self.recurrence_interval,
             "anchor_date": self.anchor_date,
-            "due_date": self.due_date,
-            "graceful": self.graceful,
             "last_completed_window": self.last_completed_window,
             "last_completed_at": self.last_completed_at,
             "answer_mode": self.answer_mode,

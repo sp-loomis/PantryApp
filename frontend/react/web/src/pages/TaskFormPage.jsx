@@ -21,6 +21,7 @@ import {
   VStack,
   Text,
 } from '@chakra-ui/react';
+// NOTE: tasks are cadence reminders or dateless to-dos — there is no due date.
 import {
   getTask,
   createTask,
@@ -46,8 +47,6 @@ export default function TaskFormPage() {
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState([]);
   const [recurrence, setRecurrence] = useState({ ...EMPTY_RECURRENCE });
-  const [dueDate, setDueDate] = useState('');
-  const [graceful, setGraceful] = useState(true);
   const [answerMode, setAnswerMode] = useState('checkbox');
   const [trigger, setTrigger] = useState(null);
   const [candidates, setCandidates] = useState([]);
@@ -57,7 +56,6 @@ export default function TaskFormPage() {
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const isOneShot = recurrence.recurrence_type === 'none';
   const hasTrigger = Boolean(trigger?.source_task_id);
 
   // Candidate source tasks for the trigger builder (everything but this task).
@@ -80,8 +78,6 @@ export default function TaskFormPage() {
         recurrence_interval: task.recurrence_interval ?? 2,
         anchor_date: task.anchor_date ? task.anchor_date.slice(0, 10) : '',
       });
-      setDueDate(task.due_date ? task.due_date.slice(0, 10) : '');
-      setGraceful(task.graceful ?? true);
       setAnswerMode(task.answer_mode || 'checkbox');
       setTrigger(task.trigger || null);
     } catch (err) {
@@ -114,7 +110,6 @@ export default function TaskFormPage() {
       notes,
       tags,
       recurrence_type: recurrence.recurrence_type,
-      graceful,
       answer_mode: answerMode,
       // null clears any existing trigger (edit); an incomplete builder is treated as none.
       trigger: hasTrigger ? trigger : null,
@@ -123,9 +118,6 @@ export default function TaskFormPage() {
       payload.recurrence_interval = recurrence.recurrence_interval;
       payload.anchor_date = recurrence.anchor_date || null;
     }
-    // A due date only applies to a one-shot task without a trigger; a triggered
-    // task derives its due date from the source's decision.
-    payload.due_date = isOneShot && !hasTrigger ? dueDate || null : null;
 
     try {
       setSubmitting(true);
@@ -195,27 +187,6 @@ export default function TaskFormPage() {
             <FormLabel>Depends on a decision</FormLabel>
             <TaskTriggerBuilder value={trigger} tasks={candidates} onChange={setTrigger} />
           </FormControl>
-
-          {isOneShot && !hasTrigger && (
-            <>
-              <FormControl>
-                <FormLabel>Due date</FormLabel>
-                <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-              </FormControl>
-              <FormControl>
-                <Checkbox
-                  isChecked={graceful}
-                  onChange={(e) => setGraceful(e.target.checked)}
-                  colorScheme="brand"
-                >
-                  Disappear gracefully when overdue
-                </Checkbox>
-                <FormHelperText>
-                  If checked, a missed task quietly hides instead of nagging as overdue.
-                </FormHelperText>
-              </FormControl>
-            </>
-          )}
 
           <FormControl>
             <FormLabel>Tags</FormLabel>

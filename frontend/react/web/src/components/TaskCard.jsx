@@ -4,7 +4,7 @@
  * One task in a list. A plain task shows a checkbox that completes/uncompletes
  * it (for the current window); a decision task (`answer_mode === 'yesno'`) shows
  * a Yes/No pair instead. Tapping the name opens the task detail. Shows the
- * recurrence label and an urgency badge.
+ * cadence label and, when relevant, a status badge (Done / Waiting).
  */
 
 import { Link as RouterLink } from 'react-router-dom';
@@ -87,9 +87,11 @@ export default function TaskCard({ task, onToggleComplete, onAnswer, isToggling 
             </HStack>
           </Box>
 
-          <Badge colorScheme={badge.color} flexShrink={0} borderRadius="md" px={2} py={1}>
-            {badge.label}
-          </Badge>
+          {badge && (
+            <Badge colorScheme={badge.color} flexShrink={0} borderRadius="md" px={2} py={1}>
+              {badge.label}
+            </Badge>
+          )}
         </Flex>
       </CardBody>
     </LinkBox>

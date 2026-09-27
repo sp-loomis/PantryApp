@@ -2,7 +2,7 @@
  * reportTasks — reconcile frozen report task snapshots with live task state.
  *
  * A report message stores task rows as a point-in-time snapshot (`task_id`,
- * `done`, `computed_status`, `current_due` as they were when the report ran).
+ * `done`, `computed_status`, `recurrence_type` as they were when the report ran).
  * The single-report page overlays the *live* task state so its checkboxes read
  * true even if a task changed after the report ran. Report membership (which
  * tasks are listed) stays frozen; only per-task state is refreshed.
@@ -25,7 +25,7 @@ export function buildTaskState(tasks = []) {
  * Resolve the row to render for a snapshot item, preferring live task state.
  *
  * When the task still exists (present in `taskState`), its live `done`,
- * `computed_status` and `current_due` win over the snapshot. When it's gone
+ * `computed_status` and `recurrence_type` win over the snapshot. When it's gone
  * (deleted since the report ran), we fall back to the snapshot and flag it so
  * the UI can disable its checkbox instead of firing a request that 404s.
  *
@@ -35,7 +35,7 @@ export function buildTaskState(tasks = []) {
  *
  * @param {object} item - the snapshot task dict from message.sections[].content.items
  * @param {Map<string, object>} taskState - live tasks by id
- * @returns {{task_id, name, done, computed_status, current_due, answer_mode, last_decision, exists}}
+ * @returns {{task_id, name, done, computed_status, recurrence_type, recurrence_interval, answer_mode, last_decision, exists}}
  */
 export function resolveTaskRow(item, taskState) {
   const live = taskState?.get(item.task_id);
@@ -45,7 +45,8 @@ export function resolveTaskRow(item, taskState) {
     name: item.name,
     done: Boolean(source.done),
     computed_status: source.computed_status,
-    current_due: source.current_due,
+    recurrence_type: source.recurrence_type,
+    recurrence_interval: source.recurrence_interval,
     answer_mode: source.answer_mode || 'checkbox',
     last_decision: source.last_decision ?? null,
     exists: Boolean(live),

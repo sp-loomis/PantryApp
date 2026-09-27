@@ -5,7 +5,7 @@ Each test drives a whole HTTP request through ``app.lambda_handler`` via the
 regardless of where the tests run.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 UTC = {"tz": "UTC"}
 
@@ -15,25 +15,22 @@ def _utc_today():
     return datetime.now(timezone.utc).date()
 
 
-def _iso_in(days: int) -> str:
-    """An ISO date ``days`` from UTC today (negative for the past)."""
-    return (_utc_today() + timedelta(days=days)).isoformat()
-
-
 # ---------------------------------------------------------------------------
 # POST /tasks
 # ---------------------------------------------------------------------------
 
-def test_create_one_shot_task_happy(api):
-    resp = api.call("POST", "/tasks", body={"name": "Fix the fence", "due_date": _iso_in(3)}, query=UTC)
+def test_create_to_do_happy(api):
+    # A dateless to-do: recurrence_type "none", present until marked done.
+    resp = api.call("POST", "/tasks", body={"name": "Fix the fence"}, query=UTC)
 
     assert resp.status_code == 201
     task = resp.body["task"]
     assert task["name"] == "Fix the fence"
     assert task["recurrence_type"] == "none"
-    assert task["graceful"] is True
     assert task["done"] is False
-    assert task["computed_status"] == "due_soon"
+    assert task["computed_status"] == "present"
+    assert task["active"] is True
+    assert "due_date" not in task  # no date fields on the reminder model
     assert "task_id" in task
 
 
@@ -43,7 +40,7 @@ def test_create_daily_task_defaults_and_status(api):
     assert resp.status_code == 201
     task = resp.body["task"]
     assert task["recurrence_type"] == "daily"
-    assert task["computed_status"] == "due_today"
+    assert task["computed_status"] == "present"
     assert task["active"] is True
 
 
@@ -89,7 +86,7 @@ def test_create_task_invalid_recurrence_type_returns_400(api):
 
 def test_list_tasks_active_filter_hides_done(api):
     daily = api.call("POST", "/tasks", body={"name": "Feed chickens", "recurrence_type": "daily"}, query=UTC).body["task"]
-    api.call("POST", "/tasks", body={"name": "One-off", "due_date": _iso_in(2)}, query=UTC)
+    api.call("POST", "/tasks", body={"name": "One-off"}, query=UTC)
 
     api.call("POST", f"/tasks/{daily['task_id']}/complete", query=UTC)
 
@@ -99,14 +96,16 @@ def test_list_tasks_active_filter_hides_done(api):
     assert "One-off" in names
 
 
-def test_list_tasks_hides_graceful_overdue_one_shot(api):
-    api.call("POST", "/tasks", body={"name": "Missed chore", "due_date": _iso_in(-2), "graceful": True}, query=UTC)
-    api.call("POST", "/tasks", body={"name": "Nagging chore", "due_date": _iso_in(-2), "graceful": False}, query=UTC)
+def test_list_tasks_keeps_undone_to_do_present(api):
+    # A dateless to-do stays on the active list until it is completed.
+    todo = api.call("POST", "/tasks", body={"name": "Fix latch"}, query=UTC).body["task"]
 
     active = api.call("GET", "/tasks", query={"tz": "UTC", "status": "active"}).body["tasks"]
-    names = {t["name"] for t in active}
-    assert "Missed chore" not in names  # graceful -> disappears
-    assert "Nagging chore" in names  # non-graceful -> still overdue
+    assert "Fix latch" in {t["name"] for t in active}
+
+    api.call("POST", f"/tasks/{todo['task_id']}/complete", query=UTC)
+    active = api.call("GET", "/tasks", query={"tz": "UTC", "status": "active"}).body["tasks"]
+    assert "Fix latch" not in {t["name"] for t in active}
 
 
 def test_list_tasks_filters_by_tag(api):
@@ -140,7 +139,7 @@ def test_complete_then_uncomplete_daily_task(api):
 
     uncompleted = api.call("POST", f"/tasks/{task['task_id']}/uncomplete", query=UTC).body["task"]
     assert uncompleted["done"] is False
-    assert uncompleted["computed_status"] == "due_today"
+    assert uncompleted["computed_status"] == "present"
 
 
 def test_complete_missing_task_returns_404(api):
@@ -153,7 +152,7 @@ def test_complete_missing_task_returns_404(api):
 # ---------------------------------------------------------------------------
 
 def test_get_task_happy(api):
-    task = api.call("POST", "/tasks", body={"name": "Split firewood", "due_date": _iso_in(1)}, query=UTC).body["task"]
+    task = api.call("POST", "/tasks", body={"name": "Split firewood"}, query=UTC).body["task"]
 
     resp = api.call("GET", f"/tasks/{task['task_id']}", query=UTC)
     assert resp.status_code == 200
@@ -175,14 +174,6 @@ def test_update_task_changes_recurrence(api):
     assert resp.status_code == 200
     assert resp.body["task"]["recurrence_type"] == "weekly"
     assert resp.body["task"]["name"] == "Weekly chore"
-
-
-def test_update_task_clearing_due_date_removes_sparse_key(api):
-    task = api.call("POST", "/tasks", body={"name": "Dated", "due_date": _iso_in(5)}, query=UTC).body["task"]
-
-    resp = api.call("PUT", f"/tasks/{task['task_id']}", body={"due_date": None}, query=UTC)
-    assert resp.status_code == 200
-    assert resp.body["task"]["due_date"] is None
 
 
 def test_delete_task_happy(api):

@@ -32,10 +32,9 @@ LIST_ITEMS_MAX = 20
 
 # Task computed_status -> leading emoji. Anything else falls back to a bullet.
 STATUS_EMOJI = {
-    "overdue": "⚠️",    # warning
-    "due_today": "\U0001f4c5",    # calendar
-    "due_soon": "\U0001f550",     # clock
-    "done": "✅",             # check
+    "done": "✅",              # check — completed for this window / to-do done
+    "dormant": "\U0001f550",   # clock — waiting on a source decision
+    "present": "\U0001f4cc",   # pushpin — on the list now
 }
 DEFAULT_BULLET = "•"
 
@@ -109,13 +108,28 @@ def _title_block(title: str, app_base_url: str, message_id: Optional[str]) -> Di
     return _section(f"*{_link(_truncate(text, HEADER_MAX), path, app_base_url)}*")
 
 
+def _recurrence_text(task: Dict[str, Any]) -> str:
+    """Human cadence label for a task row's second column ('Daily', 'Weekly',
+    'Every N days'), or the em dash for a dateless to-do."""
+    rtype = task.get("recurrence_type")
+    if rtype == "daily":
+        return "Daily"
+    if rtype == "weekly":
+        return "Weekly"
+    if rtype == "interval":
+        n = task.get("recurrence_interval") or 1
+        return "Daily" if n == 1 else f"Every {n} days"
+    return "—"
+
+
 def _entry_fields(section: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Two mrkdwn fields per task/item — a name column (emoji + plain name) and a
-    date column — laid out by Slack as a 2-column grid.
+    second column (a task's cadence, or an item's use-by date) — laid out by
+    Slack as a 2-column grid.
 
     Rows are plain names, not links: in Slack only the report title links back to
     the app (the web message page links each row instead). The em dash marks a
-    missing deadline so both columns stay aligned.
+    missing cadence/deadline so both columns stay aligned.
     """
     content = section.get("content") or {}
     section_type = section.get("type")
@@ -126,8 +140,7 @@ def _entry_fields(section: Dict[str, Any]) -> List[Dict[str, Any]]:
         name = _escape(str(it.get("name") or "").strip() or "(unnamed)")
         if section_type == "task_query":
             emoji = STATUS_EMOJI.get(it.get("computed_status"), DEFAULT_BULLET)
-            when = _slack_date(it.get("current_due"))
-            date_text = f"due {when}" if when else "—"
+            date_text = _recurrence_text(it)
         else:  # item_query
             emoji = DEFAULT_BULLET
             when = _slack_date(it.get("use_by_date"))

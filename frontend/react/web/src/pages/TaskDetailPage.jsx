@@ -29,7 +29,6 @@ import PageHeader from '../components/PageHeader';
 import ErrorMessage from '../components/ErrorMessage';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { EditIcon, TrashIcon } from '../components/icons';
-import { formatDate } from '../utils/dates';
 import { taskStatusBadge, recurrenceLabel } from '../utils/taskStatus';
 
 function Field({ label, children }) {
@@ -161,24 +160,16 @@ export default function TaskDetailPage() {
         <CardBody>
           <VStack align="stretch" spacing={4}>
             <Field label="Status">
-              <Badge colorScheme={badge.color}>{badge.label}</Badge>
+              {badge ? (
+                <Badge colorScheme={badge.color}>{badge.label}</Badge>
+              ) : (
+                <Text>On the list</Text>
+              )}
             </Field>
 
-            <Field label="Repeat">
+            <Field label="Reminder">
               <Text>{recurrenceLabel(task)}</Text>
             </Field>
-
-            {task.recurrence_type === 'none' && (
-              <Field label="Due date">
-                <Text>{task.due_date ? formatDate(task.due_date) : '—'}</Text>
-              </Field>
-            )}
-
-            {task.recurrence_type !== 'none' && task.current_due && (
-              <Field label="Due this window">
-                <Text>{formatDate(task.current_due)}</Text>
-              </Field>
-            )}
 
             <Field label="Tags">
               {task.tags?.length > 0 ? (

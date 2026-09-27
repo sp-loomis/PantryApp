@@ -25,11 +25,11 @@ def test_daily_task_completes_then_reappears_next_day(task_service):
     completed = task_service.complete_task(USER, tid, tz="UTC", now=DAY1)
     assert completed["done"] is True
 
-    # Day 2: the stored window no longer matches -> the chore is due again.
+    # Day 2: the stored window no longer matches -> the reminder is present again.
     stored = task_service.get_task(USER, tid, tz="UTC")
     status = compute_status(stored, "UTC", DAY2)
     assert status["done"] is False
-    assert status["computed_status"] == "due_today"
+    assert status["computed_status"] == "present"
     assert status["active"] is True
 
 
@@ -44,13 +44,18 @@ def test_uncomplete_restores_active_state(task_service):
     assert restored["last_completed_at"] is None
 
 
-def test_one_shot_due_date_roundtrips_and_clears(task_service):
-    task = task_service.create_task(USER, "Fix gate", due_date="2026-09-10", tz="UTC")
+def test_to_do_stays_present_until_marked_done(task_service):
+    # A dateless to-do (recurrence_type "none") stays on the active list until done.
+    task = task_service.create_task(USER, "Fix gate", tz="UTC")
     tid = task["task_id"]
-    assert task_service.get_task(USER, tid, tz="UTC")["due_date"] == "2026-09-10"
+    got = task_service.get_task(USER, tid, tz="UTC")
+    assert got["recurrence_type"] == "none"
+    assert got["active"] is True
+    assert "due_date" not in got  # no date fields on the reminder model
 
-    cleared = task_service.update_task(USER, tid, {"due_date": None}, tz="UTC")
-    assert cleared["due_date"] is None
+    done = task_service.complete_task(USER, tid, tz="UTC", now=DAY1)
+    assert done["done"] is True
+    assert done["active"] is False
 
 
 def test_invalid_recurrence_type_raises(task_service):

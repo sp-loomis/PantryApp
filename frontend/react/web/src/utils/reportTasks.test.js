@@ -23,20 +23,21 @@ describe('resolveTaskRow', () => {
     task_id: 't1',
     name: 'Water plants',
     done: false,
-    computed_status: 'due_today',
-    current_due: '2026-09-18',
+    computed_status: 'present',
+    recurrence_type: 'daily',
   };
 
   it('prefers live task state over the frozen snapshot when the task exists', () => {
     const state = buildTaskState([
-      { task_id: 't1', done: true, computed_status: 'done', current_due: '2026-09-25' },
+      { task_id: 't1', done: true, computed_status: 'done', recurrence_type: 'weekly' },
     ]);
     expect(resolveTaskRow(snapshot, state)).toEqual({
       task_id: 't1',
       name: 'Water plants',
       done: true,
       computed_status: 'done',
-      current_due: '2026-09-25',
+      recurrence_type: 'weekly',
+      recurrence_interval: undefined,
       answer_mode: 'checkbox',
       last_decision: null,
       exists: true,
@@ -62,8 +63,8 @@ describe('resolveTaskRow', () => {
   it('falls back to the snapshot and flags exists=false when the task is gone', () => {
     const row = resolveTaskRow(snapshot, buildTaskState([]));
     expect(row.done).toBe(false);
-    expect(row.computed_status).toBe('due_today');
-    expect(row.current_due).toBe('2026-09-18');
+    expect(row.computed_status).toBe('present');
+    expect(row.recurrence_type).toBe('daily');
     expect(row.exists).toBe(false);
   });
 

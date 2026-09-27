@@ -794,7 +794,7 @@ def get_aggregate_stats():
 @app.post("/tasks")
 @tracer.capture_method
 def create_task():
-    """Create a new task (one-shot or recurring)."""
+    """Create a new task (a cadence reminder or a dateless to-do)."""
     try:
         user_id = _current_user_id()
         data = app.current_event.json_body or {}
@@ -813,8 +813,6 @@ def create_task():
             recurrence_type=data.get('recurrence_type', 'none'),
             recurrence_interval=data.get('recurrence_interval'),
             anchor_date=data.get('anchor_date'),
-            due_date=data.get('due_date'),
-            graceful=data.get('graceful', True),
             answer_mode=data.get('answer_mode', 'checkbox'),
             trigger=data.get('trigger'),
             tz=_current_tz(),

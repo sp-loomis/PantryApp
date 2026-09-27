@@ -485,7 +485,7 @@ def item_tag_remove(item_id: str, tag: str):
 
 @cli.group()
 def task():
-    """Manage tasks and chores (one-shot and recurring)."""
+    """Manage tasks: cadence reminders and dateless to-dos."""
     pass
 
 
@@ -494,23 +494,19 @@ def task():
 @click.option('--notes', default='', help='Additional notes')
 @click.option('--tags', help='Comma-separated tags')
 @click.option('--recurrence', type=click.Choice(['none', 'daily', 'weekly', 'interval']),
-              default='none', help='Recurrence type (default none = one-shot)')
-@click.option('--interval', type=int, help='Repeat every N days (required for --recurrence interval)')
-@click.option('--anchor', help='Anchor/start date for interval tasks (YYYY-MM-DD)')
-@click.option('--due', help='Due date for one-shot tasks (YYYY-MM-DD)')
-@click.option('--graceful/--no-graceful', default=True,
-              help='One-shot: self-hide once past due instead of nagging (default graceful)')
+              default='none', help='Reminder cadence (default none = a dateless to-do)')
+@click.option('--interval', type=int, help='Remind every N days (required for --recurrence interval)')
+@click.option('--anchor', help='Anchor/start date for interval reminders (YYYY-MM-DD)')
 @click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
 @click.option('--user-id', help='[Admin only] Create task for specific user')
 def create_task(name: str, notes: str, tags: Optional[str], recurrence: str,
-                interval: Optional[int], anchor: Optional[str], due: Optional[str],
-                graceful: bool, tz: Optional[str], user_id: Optional[str]):
-    """Create a new task (one-shot or recurring)."""
+                interval: Optional[int], anchor: Optional[str],
+                tz: Optional[str], user_id: Optional[str]):
+    """Create a new task (a cadence reminder or a dateless to-do)."""
     task_data = {
         'name': name,
         'notes': notes,
         'recurrence_type': recurrence,
-        'graceful': graceful,
     }
     if interval is not None:
         task_data['recurrence_interval'] = interval
@@ -519,12 +515,6 @@ def create_task(name: str, notes: str, tags: Optional[str], recurrence: str,
     if anchor:
         try:
             task_data['anchor_date'] = parse_date(anchor).isoformat()
-        except ValueError:
-            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
-            sys.exit(1)
-    if due:
-        try:
-            task_data['due_date'] = parse_date(due).isoformat()
         except ValueError:
             print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
             sys.exit(1)
@@ -545,7 +535,7 @@ def create_task(name: str, notes: str, tags: Optional[str], recurrence: str,
 @click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
 @click.option('--user-id', help='[Admin only] List tasks for specific user')
 def list_tasks(status: str, tag: Optional[str], tz: Optional[str], user_id: Optional[str]):
-    """List tasks with computed urgency status."""
+    """List tasks with computed status (present / done / dormant)."""
     query_params = {'tz': tz or _default_tz()}
     if status != 'all':
         query_params['status'] = status
@@ -582,17 +572,13 @@ def get_task(task_id: str, tz: Optional[str], user_id: Optional[str]):
 @click.option('--tags', help='New comma-separated tags')
 @click.option('--recurrence', type=click.Choice(['none', 'daily', 'weekly', 'interval']),
               help='New recurrence type')
-@click.option('--interval', type=int, help='New repeat interval in days')
+@click.option('--interval', type=int, help='New reminder interval in days')
 @click.option('--anchor', help='New anchor/start date (YYYY-MM-DD)')
-@click.option('--due', help='New due date (YYYY-MM-DD)')
-@click.option('--graceful/--no-graceful', default=None,
-              help='Toggle graceful self-hide for one-shot tasks')
 @click.option('--tz', default=None, help='IANA timezone for window computation (default: local)')
 @click.option('--user-id', help='[Admin only] Update task for specific user')
 def update_task(task_id: str, name: Optional[str], notes: Optional[str], tags: Optional[str],
                 recurrence: Optional[str], interval: Optional[int], anchor: Optional[str],
-                due: Optional[str], graceful: Optional[bool], tz: Optional[str],
-                user_id: Optional[str]):
+                tz: Optional[str], user_id: Optional[str]):
     """Update a task."""
     updates = {}
     if name:
@@ -611,14 +597,6 @@ def update_task(task_id: str, name: Optional[str], notes: Optional[str], tags: O
         except ValueError:
             print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
             sys.exit(1)
-    if due:
-        try:
-            updates['due_date'] = parse_date(due).isoformat()
-        except ValueError:
-            print(json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"}, indent=2))
-            sys.exit(1)
-    if graceful is not None:
-        updates['graceful'] = graceful
 
     if not updates:
         print(json.dumps({"error": "No updates provided"}, indent=2))

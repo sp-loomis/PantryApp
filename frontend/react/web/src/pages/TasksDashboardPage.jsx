@@ -1,11 +1,10 @@
 /**
  * TasksDashboardPage — the task home.
  *
- * Shows everything that needs doing now, grouped by urgency
- * (Overdue · Today · This week · Upcoming). Checking a task off completes it for
- * the current window; recurring chores reappear next window, and a completed
- * one-shot offers an Undo. Recurring tasks completed for the current window are
- * tucked into a "Completed" section so they can be un-checked.
+ * Shows everything on the list now, grouped by kind (Reminders · To-do).
+ * Checking a task off completes it for the current window; reminders reappear
+ * next window, and a completed to-do offers an Undo. Reminders completed for the
+ * current window are tucked into a "Completed" section so they can be un-checked.
  */
 
 import { useCallback, useEffect, useState } from 'react';

@@ -1,8 +1,9 @@
 /**
  * RecurrenceField
  *
- * Controlled recurrence editor for the task form. Emits a value object:
+ * Controlled reminder-cadence editor for the task form. Emits a value object:
  *   { recurrence_type, recurrence_interval, anchor_date }
+ * "One-time" is a dateless to-do; the others are reminders on a cadence.
  * Reveals the interval stepper + anchor date only for the "interval" type.
  */
 
@@ -35,7 +36,7 @@ export default function RecurrenceField({ value, onChange }) {
 
   return (
     <FormControl>
-      <FormLabel>Repeat</FormLabel>
+      <FormLabel>Remind me</FormLabel>
       <VStack spacing={3} align="stretch">
         <Select
           value={recurrence_type}
@@ -80,11 +81,11 @@ export default function RecurrenceField({ value, onChange }) {
           </HStack>
         )}
       </VStack>
-      {recurrence_type !== 'none' && (
-        <FormHelperText>
-          Recurring chores gracefully disappear when a window passes — a missed day never piles up.
-        </FormHelperText>
-      )}
+      <FormHelperText>
+        {recurrence_type === 'none'
+          ? 'A one-time to-do stays on your list until you mark it done.'
+          : 'A reminder stays until you mark it off, then returns fresh next time — a missed one never piles up.'}
+      </FormHelperText>
     </FormControl>
   );
 }

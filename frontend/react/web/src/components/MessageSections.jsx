@@ -12,6 +12,7 @@ import { Link as RouterLink } from 'react-router-dom';
 
 import { formatDate } from '../utils/dates';
 import { resolveTaskRow } from '../utils/reportTasks';
+import { recurrenceLabel } from '../utils/taskStatus';
 import DecisionButtons from './DecisionButtons';
 
 /** Trim trailing zeros off an aggregate value for display (mirrors slack_blocks). */
@@ -44,10 +45,9 @@ function CategoryTotals({ totals }) {
 // Mirrors backend STATUS_EMOJI (slack_blocks.py) so task rows read the same in
 // both the message log and Slack.
 const STATUS_EMOJI = {
-  overdue: '⚠️',
-  due_today: '📅',
-  due_soon: '🕐',
   done: '✅',
+  dormant: '🕐',
+  present: '📌',
 };
 const DEFAULT_BULLET = '•';
 
@@ -56,9 +56,9 @@ function TextContent({ content }) {
 }
 
 /**
- * Task/item sections render as a two-column table: name (deep link) + due date,
- * with a leading status-emoji column. `isTask` picks the id, route, date field,
- * emoji, and date label for the row.
+ * Task/item sections render as a two-column table: name (deep link) + a trailing
+ * column (a task's cadence, or an item's use-by date), with a leading
+ * status-emoji column. `isTask` picks the id, route, trailing value, and emoji.
  *
  * When `interactive` (task sections only, on the single-report page), the
  * leading emoji cell becomes a completion control for the real task: a checkbox
@@ -91,8 +91,10 @@ function ItemsTable({
           const status = isTask ? (row ? row.computed_status : item.computed_status) : null;
           const done = row ? row.done : Boolean(isTask && item.done);
           const emoji = isTask ? STATUS_EMOJI[status] || DEFAULT_BULLET : DEFAULT_BULLET;
-          const dueValue = isTask ? (row ? row.current_due : item.current_due) : item.use_by_date;
-          const due = formatDate(dueValue);
+          // Trailing column: a task shows its cadence; an item shows its use-by date.
+          const trailing = isTask
+            ? recurrenceLabel(row || item)
+            : formatDate(item.use_by_date);
           const isDecision = isInteractive && row.answer_mode === 'yesno';
           return (
             <Tr key={id} fontSize="sm">
@@ -128,7 +130,7 @@ function ItemsTable({
                 </Link>
               </Td>
               <Td px={0} py={1} color="gray.500" verticalAlign="top" whiteSpace="nowrap">
-                {due}
+                {trailing}
               </Td>
             </Tr>
           );

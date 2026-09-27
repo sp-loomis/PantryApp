@@ -21,10 +21,10 @@ function clientTz() {
 }
 
 /**
- * List tasks with computed urgency status.
+ * List tasks with computed status.
  * @param {{status?: 'active'|'done'|'all', tag?: string}} [opts]
- * @returns tasks, each carrying `computed_status`, `current_due`,
- *   `due_in_days`, `done` and `active`.
+ * @returns tasks, each carrying `computed_status` ('present'|'done'|'dormant'),
+ *   `done` and `active`.
  */
 export async function listTasks({ status = 'active', tag } = {}) {
   const query = { tz: clientTz(), tag };
@@ -49,8 +49,9 @@ export async function getTask(taskId) {
 }
 
 /**
- * Create a task.
- * @param {{name, notes?, tags?, recurrence_type?, recurrence_interval?, anchor_date?, due_date?, graceful?, answer_mode?, trigger?}} payload
+ * Create a task (a cadence reminder or a dateless to-do).
+ * @param {{name, notes?, tags?, recurrence_type?, recurrence_interval?, anchor_date?, answer_mode?, trigger?}} payload
+ *   recurrence_type: 'none' (to-do) | 'daily' | 'weekly' | 'interval'
  *   answer_mode: 'checkbox' | 'yesno' (a decision task)
  *   trigger (optional dependency on another task's decision):
  *     { source_task_id, on: 'yes'|'no'|'any',

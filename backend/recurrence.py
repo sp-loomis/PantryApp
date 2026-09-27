@@ -20,12 +20,10 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-# Recurrence rules supported in v1. "none" is a one-shot task with an optional
-# due_date; the others repeat and derive their status from the current window.
+# Recurrence rules supported in v1. "none" is a dateless to-do (present until
+# marked done); the others are reminders that derive done-state from the current
+# window.
 RECURRENCE_TYPES = frozenset({"none", "daily", "weekly", "interval"})
-
-# Calendar-days-out threshold separating "due soon" (orange) from "upcoming".
-DUE_SOON_DAYS = 7
 
 # Task-trigger vocabulary (decision paths). A task with a ``trigger`` is dormant
 # until its source task is answered a matching way; see ``resolve_tasks``.
@@ -113,11 +111,12 @@ def current_window_key(task: Task, now_local: datetime) -> str:
     return ""
 
 
-def window_due_date(task: Task, now_local: datetime) -> Optional[date]:
-    """The date by which the current window's occurrence is due, or None.
+def window_end_date(task: Task, now_local: datetime) -> Optional[date]:
+    """The last day of the current reminder window, or None for a to-do.
 
     Daily → today; weekly → the end (Sunday) of the current ISO week; interval →
-    the last day of the current window; one-shot → its ``due_date`` (or None).
+    the last day of the current window. A ``none`` to-do has no window → None.
+    Retained for reference/tests; status is now flat (see ``compute_status``).
     """
     rtype = task.get("recurrence_type", "none")
     today = now_local.date()
@@ -129,7 +128,7 @@ def window_due_date(task: Task, now_local: datetime) -> Optional[date]:
     if rtype == "interval":
         start, interval = _interval_window(task, today)
         return start + timedelta(days=interval - 1)
-    return _parse_date(task.get("due_date"))
+    return None
 
 
 def is_done_for_window(task: Task, now_local: datetime) -> bool:
@@ -142,53 +141,26 @@ def is_done_for_window(task: Task, now_local: datetime) -> bool:
 def is_active(task: Task, now_local: datetime) -> bool:
     """Whether the task belongs in the active list right now.
 
-    Done tasks drop out (recurring ones return next window). A past-due one-shot
-    stays only when it is *not* graceful; a graceful one self-hides.
+    Done tasks drop out (reminders return next window). Everything not done —
+    reminders in their current window and dateless to-dos alike — stays present.
     """
-    if is_done_for_window(task, now_local):
-        return False
-    if task.get("recurrence_type", "none") != "none":
-        return True
-    due = _parse_date(task.get("due_date"))
-    if due is None or due >= now_local.date():
-        return True
-    return not task.get("graceful", True)
+    return not is_done_for_window(task, now_local)
 
 
 def compute_status(task: Task, tz: Optional[str] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Compute the derived status fields merged onto a task in API responses.
+    """Compute the flat status fields merged onto a task in API responses.
 
-    Returns ``done``, ``computed_status`` (one of ``overdue``/``due_today``/
-    ``due_soon``/``upcoming``/``done``), ``current_due`` (ISO date or None),
-    ``due_in_days`` (calendar days from today; negative if overdue) and
-    ``active``.
+    Urgency is flat: a task is either ``done`` or ``present`` (there is no
+    overdue/due-soon ladder — a reminder just stays until marked off, and is
+    superseded by the next window's fresh instance). Returns ``done``,
+    ``computed_status`` (``done`` | ``present``) and ``active``.
     """
     now_local = local_now(tz, now)
-    today = now_local.date()
-
     done = is_done_for_window(task, now_local)
-    due = window_due_date(task, now_local)
-    due_in_days = (due - today).days if due is not None else None
-
-    if done:
-        status = "done"
-    elif due is None:
-        status = "upcoming"
-    elif due_in_days < 0:
-        status = "overdue"
-    elif due_in_days == 0:
-        status = "due_today"
-    elif due_in_days <= DUE_SOON_DAYS:
-        status = "due_soon"
-    else:
-        status = "upcoming"
-
     return {
         "done": done,
-        "computed_status": status,
-        "current_due": due.isoformat() if due is not None else None,
-        "due_in_days": due_in_days,
-        "active": is_active(task, now_local),
+        "computed_status": "done" if done else "present",
+        "active": not done,
     }
 
 
@@ -277,9 +249,13 @@ def _status_triggered(
     borrowed_window: str,
     now_local: datetime,
 ) -> Dict[str, Any]:
-    """Compute status for a task gated by a trigger (see module notes)."""
-    today = now_local.date()
+    """Compute flat status for a task gated by a trigger (see module notes).
 
+    ``dormant`` until the source is answered a matching way, then ``present``
+    until marked off, then ``done``. Like every other task there is no overdue
+    state; the ``deadline`` field is retained on the trigger for configuration
+    but no longer drives urgency.
+    """
     # The source's decision for its current window, or None if unanswered / gone.
     decision: Optional[str] = None
     if source is not None and source_status is not None and source_status.get("done"):
@@ -292,39 +268,17 @@ def _status_triggered(
     else:
         done = bool(task.get("last_completed_at"))
 
-    due: Optional[date] = None
-    if satisfied:
-        anchor = _parse_date((source_status or {}).get("current_due")) or today
-        due = deadline_date(anchor, trigger.get("deadline", "same_day"), trigger.get("offset_days"))
-    due_in_days = (due - today).days if due is not None else None
-
     if done:
         status = "done"
     elif not satisfied:
         status = "dormant"  # source not (yet) answered a matching way
-    elif due is None:
-        status = "upcoming"
-    elif due_in_days < 0:
-        status = "overdue"
-    elif due_in_days == 0:
-        status = "due_today"
-    elif due_in_days <= DUE_SOON_DAYS:
-        status = "due_soon"
     else:
-        status = "upcoming"
-
-    active = (
-        satisfied
-        and not done
-        and (due is None or due_in_days >= 0 or not task.get("graceful", True))
-    )
+        status = "present"
 
     return {
         "done": done,
         "computed_status": status,
-        "current_due": due.isoformat() if due is not None else None,
-        "due_in_days": due_in_days,
-        "active": active,
+        "active": satisfied and not done,
     }
 
 

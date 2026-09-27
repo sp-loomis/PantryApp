@@ -115,22 +115,22 @@ def _seed_inventory(location_service, item_service, task_service) -> None:
 
     print(f"\nSeeded {len(samples)} items for user '{DEV_USER_ID}'.")
 
-    # Sample tasks: a mix of recurring chores and one-shot deadlines.
+    # Sample tasks: a mix of cadence reminders and dateless to-dos.
     task_samples = [
-        # name, notes, tags, recurrence_type, interval, anchor, due, graceful
-        ("Water the garden", "", ["garden"], "daily", None, None, None, True),
-        ("Feed the chickens", "Morning and evening", ["animals"], "daily", None, None, None, True),
-        ("Take out compost", "", ["kitchen"], "weekly", None, None, None, True),
-        ("Deep clean the coop", "", ["animals"], "interval", 14, None, None, True),
-        ("Renew tool insurance", "", ["admin"], "none", None, None, _iso_in_days(5), True),
-        ("Return library books", "", [], "none", None, None, _iso_in_days(-2), True),
+        # name, notes, tags, recurrence_type, interval, anchor
+        ("Water the garden", "", ["garden"], "daily", None, None),
+        ("Feed the chickens", "Morning and evening", ["animals"], "daily", None, None),
+        ("Take out compost", "", ["kitchen"], "weekly", None, None),
+        ("Deep clean the coop", "", ["animals"], "interval", 14, None),
+        ("Renew tool insurance", "", ["admin"], "none", None, None),
+        ("Return library books", "", [], "none", None, None),
     ]
 
-    for name, notes, tags, rtype, interval, anchor, due, graceful in task_samples:
+    for name, notes, tags, rtype, interval, anchor in task_samples:
         created = task_service.create_task(
             DEV_USER_ID, name, notes=notes, tags=tags,
             recurrence_type=rtype, recurrence_interval=interval,
-            anchor_date=anchor, due_date=due, graceful=graceful, tz="UTC",
+            anchor_date=anchor, tz="UTC",
         )
         print(f"  * {created['name']} ({created['task_id']})")
 

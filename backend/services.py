@@ -932,12 +932,13 @@ class ItemService:
 
 
 class TaskService:
-    """Service for managing tasks/chores (one-shot and recurring).
+    """Service for managing tasks: cadence reminders and dateless to-dos.
 
-    Recurring tasks are stored as a single row plus a rule; their status is
-    computed on read via ``recurrence.compute_status`` from the caller's
-    timezone. No occurrence rows, no history, no scheduled cleanup — see
-    ``recurrence.py`` for the "graceful disappearance" model.
+    A reminder is stored as a single row plus a rule; its done-state is computed
+    on read via ``recurrence.compute_status`` from the caller's timezone. No
+    occurrence rows, no history, no scheduled cleanup — a reminder is present
+    each window until marked off and reset when the window rolls (see
+    ``recurrence.py``). A ``none`` to-do has no date and stays until marked done.
     """
 
     def __init__(self, tasks_table):
@@ -947,17 +948,15 @@ class TaskService:
     def _deserialize_task(task: Dict[str, Any]) -> Dict[str, Any]:
         """Guarantee a stable task shape for API responses.
 
-        Tasks stored without a ``due_date`` (the sparse-index key) omit it; the
-        other optional fields are surfaced as None so every response has the
-        same keys.
+        Optional fields are surfaced as None/defaults so every response has the
+        same keys. Legacy ``due_date``/``graceful`` attributes on older rows are
+        ignored (the reminder model no longer uses them).
         """
         task.setdefault("notes", "")
         task.setdefault("tags", [])
         task.setdefault("recurrence_type", "none")
         task.setdefault("recurrence_interval", None)
         task.setdefault("anchor_date", None)
-        task.setdefault("due_date", None)
-        task.setdefault("graceful", True)
         task.setdefault("last_completed_window", None)
         task.setdefault("last_completed_at", None)
         task.setdefault("answer_mode", "checkbox")
@@ -982,15 +981,13 @@ class TaskService:
         recurrence_type: str = "none",
         recurrence_interval: Optional[int] = None,
         anchor_date: Optional[str] = None,
-        due_date: Optional[str] = None,
-        graceful: bool = True,
         answer_mode: str = "checkbox",
         trigger: Optional[Dict[str, Any]] = None,
         tz: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a task, validating its recurrence rule and optional trigger."""
         tags = [t.lower() for t in (tags or [])]
-        self._validate_recurrence(recurrence_type, recurrence_interval, anchor_date, due_date)
+        self._validate_recurrence(recurrence_type, recurrence_interval, anchor_date)
         answer_mode = self._validate_answer_mode(answer_mode)
         trigger = self._validate_trigger(user_id, trigger)
 
@@ -1007,18 +1004,11 @@ class TaskService:
             recurrence_type=recurrence_type,
             recurrence_interval=recurrence_interval,
             anchor_date=anchor_date,
-            due_date=due_date,
-            graceful=graceful,
             answer_mode=answer_mode,
             trigger=trigger,
         )
 
-        storage_dict = task.to_dict()
-        # due_date backs a sparse GSI: a NULL value is rejected on an index key,
-        # so omit the attribute entirely when there is no deadline.
-        if storage_dict.get("due_date") is None:
-            storage_dict.pop("due_date", None)
-        self.tasks_table.put_item(Item=storage_dict)
+        self.tasks_table.put_item(Item=task.to_dict())
 
         logger.info(f"Created task: {task.task_id} for user: {user_id}")
         return self._with_status(task.to_dict(), tz)
@@ -1111,14 +1101,13 @@ class TaskService:
 
         # Validate against the merged view so a partial recurrence change (e.g.
         # switching to "interval") is checked with its companion fields.
-        recurrence_fields = ("recurrence_type", "recurrence_interval", "anchor_date", "due_date")
+        recurrence_fields = ("recurrence_type", "recurrence_interval", "anchor_date")
         if any(f in updates for f in recurrence_fields):
             merged = {**existing, **updates}
             self._validate_recurrence(
                 merged.get("recurrence_type", "none"),
                 merged.get("recurrence_interval"),
                 merged.get("anchor_date"),
-                merged.get("due_date"),
             )
 
         if "answer_mode" in updates:
@@ -1140,7 +1129,7 @@ class TaskService:
 
         for field_name in (
             "notes", "recurrence_type", "recurrence_interval", "anchor_date",
-            "graceful", "answer_mode",
+            "answer_mode",
         ):
             if field_name in updates:
                 set_parts.append(f"{field_name} = :{field_name}")
@@ -1161,15 +1150,6 @@ class TaskService:
             set_parts.append("#tags = :tags")
             expr_values[":tags"] = sorted({t.lower() for t in updates["tags"]})
             expr_names["#tags"] = "tags"
-
-        if "due_date" in updates:
-            # due_date backs a sparse GSI, so clearing it must REMOVE the
-            # attribute rather than SET it to NULL.
-            if updates["due_date"] is None:
-                remove_parts.append("due_date")
-            else:
-                set_parts.append("due_date = :due_date")
-                expr_values[":due_date"] = updates["due_date"]
 
         update_expr = "SET " + ", ".join(set_parts)
         if remove_parts:
@@ -1286,7 +1266,6 @@ class TaskService:
         recurrence_type: Any,
         recurrence_interval: Any,
         anchor_date: Any,
-        due_date: Any,
     ) -> None:
         """Validate a recurrence rule, raising ValueError on any problem."""
         if recurrence_type not in RECURRENCE_TYPES:
@@ -1303,12 +1282,11 @@ class TaskService:
                 raise ValueError(
                     "recurrence_interval must be a positive integer for interval tasks"
                 )
-        for label, value in (("anchor_date", anchor_date), ("due_date", due_date)):
-            if value is not None:
-                try:
-                    datetime.fromisoformat(value)
-                except (TypeError, ValueError):
-                    raise ValueError(f"Invalid {label}: must be an ISO-8601 date")
+        if anchor_date is not None:
+            try:
+                datetime.fromisoformat(anchor_date)
+            except (TypeError, ValueError):
+                raise ValueError("Invalid anchor_date: must be an ISO-8601 date")
 
     @staticmethod
     def _validate_answer_mode(answer_mode: Any) -> str:

@@ -1,8 +1,8 @@
 """Unit tests for the pure recurrence/status logic (``recurrence.py``).
 
-These exercise window computation, the "done for now" comparison, graceful
-one-shot hiding, and window rollover — all with an injected ``now`` so they are
-fully deterministic and timezone-explicit.
+These exercise window computation, the "done for now" comparison, the flat
+present/done/dormant status model, and window rollover — all with an injected
+``now`` so they are fully deterministic and timezone-explicit.
 """
 
 from datetime import datetime, timezone
@@ -15,7 +15,7 @@ from recurrence import (
     is_active,
     is_done_for_window,
     local_now,
-    window_due_date,
+    window_end_date,
 )
 
 # A fixed reference instant: Saturday 2026-09-05, 12:00 UTC.
@@ -53,21 +53,25 @@ def test_one_shot_has_no_window_key():
 
 
 # ---------------------------------------------------------------------------
-# Due dates per window
+# Window-end dates (reference/tests only; status no longer uses them)
 # ---------------------------------------------------------------------------
 
-def test_daily_due_today():
-    assert window_due_date({"recurrence_type": "daily"}, _at()).isoformat() == "2026-09-05"
+def test_daily_window_ends_today():
+    assert window_end_date({"recurrence_type": "daily"}, _at()).isoformat() == "2026-09-05"
 
 
-def test_weekly_due_end_of_iso_week_sunday():
-    assert window_due_date({"recurrence_type": "weekly"}, _at()).isoformat() == "2026-09-06"
+def test_weekly_window_ends_end_of_iso_week_sunday():
+    assert window_end_date({"recurrence_type": "weekly"}, _at()).isoformat() == "2026-09-06"
 
 
-def test_interval_due_is_last_day_of_window():
+def test_interval_window_ends_last_day_of_window():
     task = {"recurrence_type": "interval", "recurrence_interval": 3, "anchor_date": "2026-09-01"}
-    # Window 09-04..09-06 -> due 09-06.
-    assert window_due_date(task, _at()).isoformat() == "2026-09-06"
+    # Window 09-04..09-06 -> ends 09-06.
+    assert window_end_date(task, _at()).isoformat() == "2026-09-06"
+
+
+def test_one_shot_has_no_window_end():
+    assert window_end_date({"recurrence_type": "none"}, _at()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -77,68 +81,49 @@ def test_interval_due_is_last_day_of_window():
 def test_daily_done_only_within_its_window():
     task = {"recurrence_type": "daily", "last_completed_window": "2026-09-05"}
     assert is_done_for_window(task, _at()) is True
-    # Next day: the stored window no longer matches -> task is due again.
+    # Next day: the stored window no longer matches -> task is present again.
     tomorrow = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
     assert is_done_for_window(task, _at(now=tomorrow)) is False
 
 
 def test_completing_and_rollover_status_cycle():
     task = {"recurrence_type": "daily"}
-    assert compute_status(task, "UTC", NOW)["computed_status"] == "due_today"
+    assert compute_status(task, "UTC", NOW)["computed_status"] == "present"
 
     task["last_completed_window"] = current_window_key(task, _at())
     assert compute_status(task, "UTC", NOW)["computed_status"] == "done"
 
+    # A new day supersedes the old completion: the reminder is present again.
     tomorrow = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
     status = compute_status(task, "UTC", tomorrow)
-    assert status["computed_status"] == "due_today"
+    assert status["computed_status"] == "present"
     assert status["done"] is False
 
 
 # ---------------------------------------------------------------------------
-# One-shot tasks + graceful hiding
+# Dateless to-dos (recurrence_type "none")
 # ---------------------------------------------------------------------------
 
-def test_one_shot_future_due_is_upcoming_or_soon():
-    task = {"recurrence_type": "none", "due_date": "2026-09-20"}
+def test_undone_to_do_is_present_and_active():
+    task = {"recurrence_type": "none"}
     status = compute_status(task, "UTC", NOW)
-    assert status["computed_status"] == "upcoming"
-    assert status["due_in_days"] == 15
+    assert status["computed_status"] == "present"
     assert status["active"] is True
 
 
-def test_one_shot_due_soon_within_a_week():
-    task = {"recurrence_type": "none", "due_date": "2026-09-09"}
-    assert compute_status(task, "UTC", NOW)["computed_status"] == "due_soon"
-
-
-def test_graceful_past_due_one_shot_self_hides():
-    task = {"recurrence_type": "none", "due_date": "2026-09-01", "graceful": True}
-    status = compute_status(task, "UTC", NOW)
-    assert status["computed_status"] == "overdue"
-    assert status["active"] is False  # graceful -> disappears from the active list
-
-
-def test_non_graceful_past_due_one_shot_keeps_nagging():
-    task = {"recurrence_type": "none", "due_date": "2026-09-01", "graceful": False}
-    status = compute_status(task, "UTC", NOW)
-    assert status["computed_status"] == "overdue"
-    assert status["active"] is True
-
-
-def test_completed_one_shot_is_done_and_inactive():
-    task = {"recurrence_type": "none", "due_date": "2026-09-09", "last_completed_at": "2026-09-05T12:00:00+00:00"}
+def test_completed_to_do_is_done_and_inactive():
+    task = {"recurrence_type": "none", "last_completed_at": "2026-09-05T12:00:00+00:00"}
     status = compute_status(task, "UTC", NOW)
     assert status["done"] is True
+    assert status["computed_status"] == "done"
     assert status["active"] is False
 
 
-def test_undated_one_shot_is_active_until_done():
-    task = {"recurrence_type": "none"}
-    status = compute_status(task, "UTC", NOW)
-    assert status["active"] is True
-    assert status["current_due"] is None
-    assert status["computed_status"] == "upcoming"
+def test_active_reminder_stays_present_regardless_of_window_position():
+    # A weekly reminder late in its window is still just "present" — no urgency.
+    task = {"recurrence_type": "weekly"}
+    assert compute_status(task, "UTC", NOW)["computed_status"] == "present"
+    assert is_active(task, _at()) is True
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +147,7 @@ def test_interval_future_anchor_reports_first_window():
     # Anchor in the future: the current window clamps to the first one.
     task = {"recurrence_type": "interval", "recurrence_interval": 5, "anchor_date": "2026-09-10"}
     status = compute_status(task, "UTC", NOW)
-    assert status["current_due"] == "2026-09-14"  # 09-10 + (5-1) days
+    assert status["computed_status"] == "present"
     assert status["active"] is True
 
 
@@ -212,13 +197,12 @@ def test_deadline_date_variants():
     assert deadline_date(anchor, "offset", 3) == date(2026, 9, 8)
 
 
-def test_dependent_active_when_source_answered_yes():
+def test_dependent_present_when_source_answered_yes():
     src = _daily_decision("a", "yes")
     dep = _dependent("b", "a", on="yes")
     r = _by_id(resolve_tasks([src, dep], "UTC", NOW))
-    assert r["b"]["computed_status"] == "due_today"
+    assert r["b"]["computed_status"] == "present"
     assert r["b"]["active"] is True
-    assert r["b"]["current_due"] == "2026-09-05"
 
 
 def test_dependent_dormant_when_source_unanswered():
@@ -227,7 +211,6 @@ def test_dependent_dormant_when_source_unanswered():
     r = _by_id(resolve_tasks([src, dep], "UTC", NOW))
     assert r["b"]["computed_status"] == "dormant"
     assert r["b"]["active"] is False
-    assert r["b"]["current_due"] is None
 
 
 def test_yes_and_no_branch_are_mutually_exclusive():
@@ -236,16 +219,7 @@ def test_yes_and_no_branch_are_mutually_exclusive():
     no_dep = _dependent("n", "a", on="no")
     r = _by_id(resolve_tasks([src, yes_dep, no_dep], "UTC", NOW))
     assert r["y"]["active"] is False and r["y"]["computed_status"] == "dormant"
-    assert r["n"]["active"] is True
-
-
-def test_dependent_deadline_same_week_and_offset():
-    src = _daily_decision("a", "yes")
-    wk = _dependent("w", "a", on="yes", deadline="same_week")
-    off = _dependent("o", "a", on="yes", deadline="offset", offset_days=3)
-    r = _by_id(resolve_tasks([src, wk, off], "UTC", NOW))
-    assert r["w"]["current_due"] == "2026-09-06"  # Sunday of NOW's week
-    assert r["o"]["current_due"] == "2026-09-08"  # NOW + 3 days
+    assert r["n"]["active"] is True and r["n"]["computed_status"] == "present"
 
 
 def test_dependent_done_keyed_to_source_window():

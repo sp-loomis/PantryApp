@@ -54,12 +54,12 @@ def test_custom_message_escapes_mrkdwn():
     assert "&lt;" in flat and "&amp;" in flat and "&gt;" in flat
 
 
-def test_task_section_plain_name_and_deadline():
+def test_task_section_plain_name_and_cadence():
     blocks = render_message_blocks("T", [
         {"type": "task_query", "heading": "Chores", "content": {
             "items": [
-                {"name": "Feed goats", "task_id": "t1", "current_due": "2026-09-20",
-                 "computed_status": "overdue"},
+                {"name": "Feed goats", "task_id": "t1", "recurrence_type": "weekly",
+                 "computed_status": "present"},
             ],
             "count": 1,
         }},
@@ -68,10 +68,10 @@ def test_task_section_plain_name_and_deadline():
     # Rows are plain names in Slack — no deep link even with a base URL.
     assert "Feed goats" in flat
     assert "/tasks/t1|" not in flat
-    # Slack native date token for the deadline (viewer-localized).
-    assert "<!date^" in flat and "due" in flat
-    # Overdue emoji present.
-    assert "⚠️" in flat
+    # The second column shows the reminder cadence, not a due date.
+    assert "Weekly" in flat
+    # "Present" emoji (pushpin) present.
+    assert "\U0001f4cc" in flat
     # Count rendered as a muted context block.
     assert any(b["type"] == "context" and "1 task" in str(b) for b in blocks)
 
@@ -101,9 +101,10 @@ def test_query_section_renders_two_column_fields_grid():
     blocks = render_message_blocks("T", [
         {"type": "task_query", "heading": "Chores", "content": {
             "items": [
-                {"name": "Feed goats", "task_id": "t1", "current_due": "2026-09-20",
-                 "computed_status": "overdue"},
-                {"name": "No date", "task_id": "t2"},
+                {"name": "Feed goats", "task_id": "t1", "recurrence_type": "weekly",
+                 "computed_status": "present"},
+                {"name": "No cadence", "task_id": "t2", "recurrence_type": "none",
+                 "computed_status": "present"},
             ],
             "count": 2,
         }},
@@ -111,15 +112,14 @@ def test_query_section_renders_two_column_fields_grid():
     grids = _field_sections(blocks)
     assert len(grids) == 1
     fields = grids[0]["fields"]
-    # Two fields (name column + date column) per row.
+    # Two fields (name column + cadence column) per row.
     assert len(fields) == 4
     assert all(f["type"] == "mrkdwn" for f in fields)
-    # Row 1: emoji + plain name in the left field, deadline token in the right field.
-    assert fields[0]["text"].startswith("⚠️ ")
-    assert fields[0]["text"] == "⚠️ Feed goats"
+    # Row 1: emoji + plain name in the left field, cadence in the right field.
+    assert fields[0]["text"] == "\U0001f4cc Feed goats"
     assert "/tasks/t1|" not in fields[0]["text"]
-    assert "<!date^" in fields[1]["text"] and fields[1]["text"].startswith("due ")
-    # Row 2: no deadline collapses to an em dash so columns stay aligned.
+    assert fields[1]["text"] == "Weekly"
+    # Row 2: a dateless to-do has no cadence -> em dash so columns stay aligned.
     assert fields[3]["text"] == "—"
 
 

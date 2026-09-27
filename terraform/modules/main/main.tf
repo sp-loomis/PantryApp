@@ -170,24 +170,12 @@ module "tasks_table" {
     {
       name = "task_id"
       type = "S"
-    },
-    {
-      name = "due_date"
-      type = "S"
     }
   ]
 
-  # DueDateIndex is sparse: only one-shot tasks with a due_date appear, mirroring
-  # the items' UseByDateIndex. Recurring tasks carry no due_date and are read via
-  # the full user-partition query, then have their status computed on the fly.
-  global_secondary_indexes = [
-    {
-      name            = "DueDateIndex"
-      hash_key        = "user_id"
-      range_key       = "due_date"
-      projection_type = "ALL"
-    }
-  ]
+  # Tasks are read via the full user-partition query, then have their status
+  # computed on the fly (see backend/recurrence.py). No secondary index needed:
+  # reminders carry a recurrence rule (not a due date) and to-dos are dateless.
 
   billing_mode = var.dynamodb_billing_mode
   tags         = var.env_tags

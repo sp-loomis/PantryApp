@@ -21,6 +21,7 @@ import {
   FiSettings,
   FiSlack,
   FiLogOut,
+  FiMoreHorizontal,
 } from 'react-icons/fi';
 import {
   RiSearch2Line,
@@ -49,3 +50,4 @@ export const CategoryIcon = (props) => <Icon as={RiStackLine} {...props} />;
 export const SettingsIcon = (props) => <Icon as={FiSettings} {...props} />;
 export const SlackIcon = (props) => <Icon as={FiSlack} {...props} />;
 export const LogoutIcon = (props) => <Icon as={FiLogOut} {...props} />;
+export const MoreIcon = (props) => <Icon as={FiMoreHorizontal} {...props} />;

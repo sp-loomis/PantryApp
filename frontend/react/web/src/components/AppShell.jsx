@@ -6,11 +6,32 @@
  *   - desktop (lg+): a left sidebar
  * One component, driven by Chakra responsive props. Content renders via <Outlet/>.
  *
- * Tabs: Search · Locations · Tasks · Tags · [+ Add]
+ * Nav model:
+ *   - Desktop sidebar shows every destination (NAV_ITEMS).
+ *   - Mobile keeps only the primary destinations as tabs (PRIMARY_ITEMS) plus a
+ *     "More" tab that opens a bottom sheet with the secondary ones (MORE_ITEMS).
+ *     Bottom bar caps at 5 targets so tap targets stay full-size on a phone.
+ *
+ * Mobile bar: Search · Locations · Tasks · [+ Add] · More
+ * More sheet: Categories · Reports · Tags · Settings
  */
 
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Box, Flex, HStack, VStack, Text, Heading, IconButton } from '@chakra-ui/react';
+import {
+  Box,
+  Flex,
+  HStack,
+  VStack,
+  Text,
+  Heading,
+  IconButton,
+  Drawer,
+  DrawerOverlay,
+  DrawerContent,
+  DrawerHeader,
+  DrawerBody,
+  useDisclosure,
+} from '@chakra-ui/react';
 import {
   SearchIcon,
   LocationIcon,
@@ -21,6 +42,7 @@ import {
   ReportIcon,
   SettingsIcon,
   LogoutIcon,
+  MoreIcon,
 } from './icons';
 import NotificationsMenu from './NotificationsMenu';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -36,6 +58,13 @@ const NAV_ITEMS = [
   { to: '/items/new', label: 'Add', icon: PlusIcon, accent: true },
 ];
 
+// Mobile bottom bar: primary destinations only. Add is accented as the primary
+// action. Order here is the on-screen order (More is appended in render).
+const PRIMARY_TABS = ['/', '/locations', '/tasks', '/items/new'];
+const PRIMARY_ITEMS = PRIMARY_TABS.map((to) => NAV_ITEMS.find((i) => i.to === to));
+// Everything else lives behind the "More" tab's bottom sheet.
+const MORE_ITEMS = NAV_ITEMS.filter((i) => !PRIMARY_TABS.includes(i.to));
+
 const APP_NAME = import.meta.env.VITE_APP_NAME || 'Homestead Manager';
 
 /** True when the current path should mark a nav item active. */
@@ -47,10 +76,10 @@ function useIsActive() {
   };
 }
 
-function SidebarLink({ item, active }) {
+function SidebarLink({ item, active, onClick }) {
   const IconCmp = item.icon;
   return (
-    <NavLink to={item.to} style={{ width: '100%' }}>
+    <NavLink to={item.to} style={{ width: '100%' }} onClick={onClick}>
       <HStack
         spacing={3}
         px={4}
@@ -99,19 +128,49 @@ function BottomTab({ item, active }) {
   );
 }
 
+/** The "More" bottom tab: a button (not a link) that opens the overflow sheet. */
+function MoreTab({ active, onClick }) {
+  return (
+    <Box
+      as="button"
+      type="button"
+      onClick={onClick}
+      aria-label="More"
+      aria-haspopup="dialog"
+    >
+      <VStack
+        spacing={0.5}
+        justify="center"
+        minW="56px"
+        minH="56px"
+        color={active ? 'brand.600' : 'gray.500'}
+      >
+        <MoreIcon boxSize={5} />
+        <Text fontSize="xs" fontWeight={active ? 'semibold' : 'medium'}>
+          More
+        </Text>
+      </VStack>
+    </Box>
+  );
+}
+
 export default function AppShell() {
   const isActive = useIsActive();
   const navigate = useNavigate();
   const { logout } = useAuthContext();
+  const { isOpen, onOpen, onClose } = useDisclosure();
 
   const handleSignOut = async () => {
     await logout();
     navigate('/login');
   };
 
+  // "More" tab reads as active when any of its hidden destinations is current.
+  const moreActive = MORE_ITEMS.some((item) => isActive(item));
+
   return (
     <Flex minH="100vh" bg="gray.50">
-      {/* Desktop sidebar */}
+      {/* Desktop sidebar — shows every destination. */}
       <Box
         as="nav"
         display={{ base: 'none', lg: 'flex' }}
@@ -162,7 +221,7 @@ export default function AppShell() {
         <Outlet />
       </Box>
 
-      {/* Mobile bottom tab bar */}
+      {/* Mobile bottom tab bar — primary destinations + More. */}
       <HStack
         as="nav"
         display={{ base: 'flex', lg: 'none' }}
@@ -180,10 +239,36 @@ export default function AppShell() {
         zIndex={10}
         boxShadow="0 -1px 6px rgba(0,0,0,0.04)"
       >
-        {NAV_ITEMS.map((item) => (
+        {PRIMARY_ITEMS.map((item) => (
           <BottomTab key={item.to} item={item} active={isActive(item)} />
         ))}
+        <MoreTab active={moreActive} onClick={onOpen} />
       </HStack>
+
+      {/* Mobile "More" overflow sheet — secondary destinations. */}
+      <Drawer
+        isOpen={isOpen}
+        onClose={onClose}
+        placement="bottom"
+        // Bottom sheet is a mobile-only affordance; harmless if lg is never open.
+      >
+        <DrawerOverlay />
+        <DrawerContent borderTopRadius="xl" pb="env(safe-area-inset-bottom)">
+          <DrawerHeader pb={2}>More</DrawerHeader>
+          <DrawerBody pb={4}>
+            <VStack spacing={1} align="stretch">
+              {MORE_ITEMS.map((item) => (
+                <SidebarLink
+                  key={item.to}
+                  item={item}
+                  active={isActive(item)}
+                  onClick={onClose}
+                />
+              ))}
+            </VStack>
+          </DrawerBody>
+        </DrawerContent>
+      </Drawer>
     </Flex>
   );
 }

@@ -41,6 +41,11 @@ logger = Logger(child=True)
 # realistic pantry restocking (e.g. a case of cans).
 COPIES_MAX = 100
 
+# Upper bound on how many items a single batch operation may touch. Same intent
+# as COPIES_MAX: cap accidental/abusive bulk writes. A search result set a user
+# would reasonably batch-edit sits well under this.
+BATCH_MAX = 100
+
 
 def _now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
@@ -701,6 +706,89 @@ class ItemService:
 
         logger.info(f"Deleted item: {item_id} for user: {user_id}")
         return True
+
+    # ------------------------------------------------------------------
+    # Batch operations (act on many items in one request)
+    # ------------------------------------------------------------------
+    # DynamoDB has no batch update_item, and per-item logic (sparse-GSI
+    # REMOVE-on-clear, tag reverse-index cleanup, category measure-type
+    # validation) lives in update_item/delete_item, so these loop and reuse
+    # those methods rather than duplicating the rules. Best-effort: a missing
+    # or invalid item is skipped with a reason instead of failing the batch.
+
+    # Fields a batch update is allowed to set. Deliberately narrow: batch edits
+    # apply one value to many items, which only makes sense for these.
+    BATCH_UPDATE_FIELDS = frozenset({"location_id", "category_id"})
+
+    def update_items_bulk(
+        self, user_id: str, item_ids: List[str], updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Apply the same ``updates`` to each of ``item_ids`` for a user.
+
+        ``updates`` may only contain :attr:`BATCH_UPDATE_FIELDS`. Each id is run
+        through :meth:`update_item`; ids that don't exist, or that fail
+        validation (e.g. a category's measure-type constraint), are collected in
+        ``skipped`` with a reason rather than aborting the batch.
+
+        Returns ``{"updated": int, "skipped": [{"item_id", "reason"}, ...]}``.
+        """
+        if len(item_ids) > BATCH_MAX:
+            raise ValueError(f"Cannot batch more than {BATCH_MAX} items at once")
+
+        bad_fields = set(updates) - self.BATCH_UPDATE_FIELDS
+        if bad_fields:
+            allowed = ", ".join(sorted(self.BATCH_UPDATE_FIELDS))
+            raise ValueError(
+                f"Unsupported batch update field(s): {', '.join(sorted(bad_fields))}. "
+                f"Allowed: {allowed}"
+            )
+        if not updates:
+            raise ValueError("No updates provided")
+
+        updated = 0
+        skipped: List[Dict[str, str]] = []
+        for item_id in item_ids:
+            try:
+                result = self.update_item(user_id, item_id, updates)
+            except ValueError as e:
+                skipped.append({"item_id": item_id, "reason": str(e)})
+                continue
+            if result is None:
+                skipped.append({"item_id": item_id, "reason": "not_found"})
+                continue
+            updated += 1
+
+        logger.info(
+            f"Batch update touched {updated} items ({len(skipped)} skipped) "
+            f"for user: {user_id}"
+        )
+        return {"updated": updated, "skipped": skipped}
+
+    def delete_items_bulk(self, user_id: str, item_ids: List[str]) -> Dict[str, Any]:
+        """Delete each of ``item_ids`` for a user (best-effort).
+
+        Loops :meth:`delete_item` so each item's tag reverse-index rows are
+        cleaned up (a raw ``batch_writer`` would skip that). Missing ids are
+        collected in ``skipped``.
+
+        Returns ``{"deleted": int, "skipped": [{"item_id", "reason"}, ...]}``.
+        """
+        if len(item_ids) > BATCH_MAX:
+            raise ValueError(f"Cannot batch more than {BATCH_MAX} items at once")
+
+        deleted = 0
+        skipped: List[Dict[str, str]] = []
+        for item_id in item_ids:
+            if self.delete_item(user_id, item_id):
+                deleted += 1
+            else:
+                skipped.append({"item_id": item_id, "reason": "not_found"})
+
+        logger.info(
+            f"Batch delete removed {deleted} items ({len(skipped)} skipped) "
+            f"for user: {user_id}"
+        )
+        return {"deleted": deleted, "skipped": skipped}
 
     # ------------------------------------------------------------------
     # Tag management (per-item)

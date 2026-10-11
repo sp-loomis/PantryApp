@@ -74,6 +74,30 @@ export async function deleteItem(itemId) {
   return api.del(`/items/${itemId}`);
 }
 
+/**
+ * Apply the same updates to many items at once (batch).
+ *
+ * `updates` may only set `location_id` / `category_id`. Best-effort: items that
+ * don't exist or fail validation come back under `skipped`.
+ *
+ * @param {string[]} itemIds
+ * @param {{location_id?: string, category_id?: string|null}} updates
+ * @returns {Promise<{updated: number, skipped: {item_id: string, reason: string}[]}>}
+ */
+export async function updateItemsBulk(itemIds, updates) {
+  return api.patch('/items', { item_ids: itemIds, updates });
+}
+
+/**
+ * Delete many items at once (batch).
+ *
+ * @param {string[]} itemIds
+ * @returns {Promise<{deleted: number, skipped: {item_id: string, reason: string}[]}>}
+ */
+export async function deleteItemsBulk(itemIds) {
+  return api.del('/items', { body: { item_ids: itemIds } });
+}
+
 // ---------------------------------------------------------------------------
 // Item tags
 // ---------------------------------------------------------------------------

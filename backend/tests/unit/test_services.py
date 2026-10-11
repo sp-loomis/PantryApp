@@ -233,6 +233,122 @@ def test_aggregate_stats_shape(services):
     assert "volume" in stats["aggregated_dimensions"]
 
 
+# ---------------------------------------------------------------------------
+# Batch operations: update_items_bulk / delete_items_bulk
+# ---------------------------------------------------------------------------
+
+def test_update_items_bulk_changes_location(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc-1")
+    b = item_service.create_item(USER, "Pear", "loc-1")
+
+    result = item_service.update_items_bulk(
+        USER, [a["item_id"], b["item_id"]], {"location_id": "loc-2"}
+    )
+
+    assert result == {"updated": 2, "skipped": []}
+    assert item_service.get_item(USER, a["item_id"])["location_id"] == "loc-2"
+    assert item_service.get_item(USER, b["item_id"])["location_id"] == "loc-2"
+
+
+def test_update_items_bulk_skips_missing_ids(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc-1")
+
+    result = item_service.update_items_bulk(
+        USER, [a["item_id"], "ghost"], {"location_id": "loc-2"}
+    )
+
+    assert result["updated"] == 1
+    assert result["skipped"] == [{"item_id": "ghost", "reason": "not_found"}]
+
+
+def test_update_items_bulk_reports_category_mismatch(services):
+    item_service, _, _ = services
+    categories = item_service.category_service
+
+    # A weight category requires a weight dimension to join.
+    cat = categories.create_category(USER, "Meat", "weight", preferred_unit="lb")
+
+    with_weight = item_service.create_item(
+        USER, "Beef", "loc",
+        dimensions=[{"dimension_type": "weight", "value": 2, "unit": "lb"}],
+    )
+    count_only = item_service.create_item(
+        USER, "Eggs", "loc",
+        dimensions=[{"dimension_type": "count", "value": 12, "unit": "units"}],
+    )
+
+    result = item_service.update_items_bulk(
+        USER,
+        [with_weight["item_id"], count_only["item_id"]],
+        {"category_id": cat["category_id"]},
+    )
+
+    # The weight item takes the category; the count-only item is skipped with a
+    # reason rather than failing the whole batch.
+    assert result["updated"] == 1
+    assert len(result["skipped"]) == 1
+    skipped = result["skipped"][0]
+    assert skipped["item_id"] == count_only["item_id"]
+    assert "weight" in skipped["reason"]
+    assert item_service.get_item(USER, with_weight["item_id"])["category_id"] == cat["category_id"]
+
+
+def test_update_items_bulk_rejects_forbidden_field(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc-1")
+    with pytest.raises(ValueError):
+        item_service.update_items_bulk(USER, [a["item_id"]], {"name": "Hacked"})
+
+
+def test_update_items_bulk_rejects_empty_updates(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc-1")
+    with pytest.raises(ValueError):
+        item_service.update_items_bulk(USER, [a["item_id"]], {})
+
+
+def test_update_items_bulk_over_cap_rejected(services):
+    item_service, _, _ = services
+    from services import BATCH_MAX
+    too_many = [f"id-{i}" for i in range(BATCH_MAX + 1)]
+    with pytest.raises(ValueError):
+        item_service.update_items_bulk(USER, too_many, {"location_id": "loc-2"})
+
+
+def test_delete_items_bulk_removes_and_clears_index(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc", tags=["fruit"])
+    b = item_service.create_item(USER, "Pear", "loc", tags=["fruit"])
+
+    result = item_service.delete_items_bulk(USER, [a["item_id"], b["item_id"]])
+
+    assert result == {"deleted": 2, "skipped": []}
+    assert item_service.get_item(USER, a["item_id"]) is None
+    assert item_service.get_item(USER, b["item_id"]) is None
+    # Reverse tag index cleaned up for both.
+    assert item_service.get_items_by_tag(USER, "fruit") == []
+
+
+def test_delete_items_bulk_skips_missing(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc")
+
+    result = item_service.delete_items_bulk(USER, [a["item_id"], "ghost"])
+
+    assert result["deleted"] == 1
+    assert result["skipped"] == [{"item_id": "ghost", "reason": "not_found"}]
+
+
+def test_delete_items_bulk_over_cap_rejected(services):
+    item_service, _, _ = services
+    from services import BATCH_MAX
+    too_many = [f"id-{i}" for i in range(BATCH_MAX + 1)]
+    with pytest.raises(ValueError):
+        item_service.delete_items_bulk(USER, too_many)
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

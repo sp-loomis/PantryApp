@@ -491,6 +491,76 @@ def list_items():
         return {"error": str(e)}, 500
 
 
+# Literal /items bulk routes are registered before the parametric
+# /items/<item_id> routes so the exact path wins the match.
+@app.patch("/items")
+@tracer.capture_method
+def update_items_bulk():
+    """Apply the same updates to a set of items (bulk).
+
+    Body: ``{"item_ids": [...], "updates": {...}}``. ``updates`` may only set
+    ``location_id`` / ``category_id``. Best-effort: items that don't exist or
+    fail validation are reported under ``skipped`` rather than failing the call.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        item_ids = data.get("item_ids")
+        updates = data.get("updates")
+        if not isinstance(item_ids, list) or not all(isinstance(i, str) for i in item_ids):
+            return {"error": "'item_ids' must be a list of strings"}, 400
+        if not isinstance(updates, dict) or not updates:
+            return {"error": "'updates' must be a non-empty object"}, 400
+        result = item_service.update_items_bulk(user_id, item_ids, updates)
+        if result["updated"]:
+            metrics.add_metric(name="ItemUpdated", unit="Count", value=result["updated"])
+        return result
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error in batch item update: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error updating items in bulk")
+        return {"error": str(e)}, 500
+
+
+@app.delete("/items")
+@tracer.capture_method
+def delete_items_bulk():
+    """Delete a set of items (bulk).
+
+    Body: ``{"item_ids": [...]}``. Missing ids are reported under ``skipped``.
+    The bare /items path is distinct from the parametric /items/<item_id> route.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        item_ids = data.get("item_ids")
+        if not isinstance(item_ids, list) or not all(isinstance(i, str) for i in item_ids):
+            return {"error": "'item_ids' must be a list of strings"}, 400
+        result = item_service.delete_items_bulk(user_id, item_ids)
+        if result["deleted"]:
+            metrics.add_metric(name="ItemDeleted", unit="Count", value=result["deleted"])
+        return result
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error in batch item delete: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error deleting items in bulk")
+        return {"error": str(e)}, 500
+
+
 @app.get("/items/expiring")
 @tracer.capture_method
 def get_expiring_items():

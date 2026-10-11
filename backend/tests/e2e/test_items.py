@@ -305,3 +305,86 @@ def test_delete_item_not_found_returns_404(api):
 
     assert resp.status_code == 404
     assert resp.body["error"] == "Item not found"
+
+
+# ---------------------------------------------------------------------------
+# PATCH /items (batch update)
+# ---------------------------------------------------------------------------
+
+def test_batch_update_location_happy(api):
+    a = _make_item(api, location_id="fridge").body["item"]
+    b = _make_item(api, location_id="fridge").body["item"]
+
+    resp = api.call(
+        "PATCH", "/items",
+        body={"item_ids": [a["item_id"], b["item_id"]], "updates": {"location_id": "pantry"}},
+    )
+
+    assert resp.status_code == 200
+    assert resp.body == {"updated": 2, "skipped": []}
+    moved = api.call("GET", f"/items/{a['item_id']}").body["item"]
+    assert moved["location_id"] == "pantry"
+
+
+def test_batch_update_skips_missing(api):
+    a = _make_item(api).body["item"]
+
+    resp = api.call(
+        "PATCH", "/items",
+        body={"item_ids": [a["item_id"], "ghost"], "updates": {"location_id": "pantry"}},
+    )
+
+    assert resp.status_code == 200
+    assert resp.body["updated"] == 1
+    assert resp.body["skipped"] == [{"item_id": "ghost", "reason": "not_found"}]
+
+
+def test_batch_update_bad_item_ids_400(api):
+    resp = api.call("PATCH", "/items", body={"item_ids": "nope", "updates": {"location_id": "x"}})
+    assert resp.status_code == 400
+
+
+def test_batch_update_empty_updates_400(api):
+    a = _make_item(api).body["item"]
+    resp = api.call("PATCH", "/items", body={"item_ids": [a["item_id"]], "updates": {}})
+    assert resp.status_code == 400
+
+
+def test_batch_update_forbidden_field_400(api):
+    a = _make_item(api).body["item"]
+    resp = api.call(
+        "PATCH", "/items",
+        body={"item_ids": [a["item_id"]], "updates": {"name": "Hacked"}},
+    )
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# DELETE /items (batch delete)
+# ---------------------------------------------------------------------------
+
+def test_batch_delete_happy(api):
+    a = _make_item(api).body["item"]
+    b = _make_item(api).body["item"]
+
+    resp = api.call("DELETE", "/items", body={"item_ids": [a["item_id"], b["item_id"]]})
+
+    assert resp.status_code == 200
+    assert resp.body == {"deleted": 2, "skipped": []}
+    assert api.call("GET", f"/items/{a['item_id']}").status_code == 404
+    assert api.call("GET", f"/items/{b['item_id']}").status_code == 404
+
+
+def test_batch_delete_skips_missing(api):
+    a = _make_item(api).body["item"]
+
+    resp = api.call("DELETE", "/items", body={"item_ids": [a["item_id"], "ghost"]})
+
+    assert resp.status_code == 200
+    assert resp.body["deleted"] == 1
+    assert resp.body["skipped"] == [{"item_id": "ghost", "reason": "not_found"}]
+
+
+def test_batch_delete_bad_body_400(api):
+    resp = api.call("DELETE", "/items", body={"item_ids": "nope"})
+    assert resp.status_code == 400

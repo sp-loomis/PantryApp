@@ -7,27 +7,45 @@
  * ("within 2 weeks") or a specific date.
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   Button,
   Center,
   Flex,
+  FormControl,
+  FormLabel,
   HStack,
   Input,
   InputGroup,
   InputLeftElement,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  ModalCloseButton,
   Spinner,
   Text,
+  useDisclosure,
+  useToast,
   VStack,
   Wrap,
   WrapItem,
 } from '@chakra-ui/react';
 import { Select as MultiSelect } from 'chakra-react-select';
-import { searchItems, listTags } from '@pantry-app/shared';
+import {
+  searchItems,
+  listTags,
+  updateItemsBulk,
+  deleteItemsBulk,
+} from '@pantry-app/shared';
 import { useInventoryContext } from '../contexts/InventoryContext';
 import LocationSelect from '../components/LocationSelect';
+import CategorySelect from '../components/CategorySelect';
+import ConfirmDialog from '../components/ConfirmDialog';
 import ItemCard from '../components/ItemCard';
 import EmptyState from '../components/EmptyState';
 import ErrorMessage from '../components/ErrorMessage';
@@ -47,6 +65,19 @@ export default function SearchPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Batch selection. `selectMode` reveals per-item checkboxes and the action
+  // bar; `selectedIds` is the chosen subset. "Select all" picks every current
+  // result, so acting on the whole query is just select-all then an action.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [locationChoice, setLocationChoice] = useState('');
+  const [categoryChoice, setCategoryChoice] = useState('');
+  const toast = useToast();
+  const locationModal = useDisclosure();
+  const categoryModal = useDisclosure();
+  const confirmDelete = useDisclosure();
 
   // Load the tag list once for the tag filter.
   useEffect(() => {
@@ -90,6 +121,102 @@ export default function SearchPage() {
   const hasFilters = Boolean(
     name || locationId || selectedTags.length || expiryEnd()
   );
+
+  // Only ids still present in the current results count as selected, so a
+  // refreshed/empty result set can't leave stale ids behind.
+  const selectedPresent = useMemo(
+    () => items.filter((it) => selectedIds.has(it.item_id)),
+    [items, selectedIds]
+  );
+  const selectedCount = selectedPresent.length;
+  const allSelected = items.length > 0 && selectedCount === items.length;
+
+  const toggleSelect = useCallback((item) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.item_id)) next.delete(item.item_id);
+      else next.add(item.item_id);
+      return next;
+    });
+  }, []);
+
+  const selectAll = () => setSelectedIds(new Set(items.map((it) => it.item_id)));
+  const deselectAll = () => setSelectedIds(new Set());
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    deselectAll();
+  };
+
+  // Summarize a bulk result ("8 updated, 2 skipped") and refresh the view.
+  const afterBulk = useCallback(
+    async (verb, result) => {
+      const done = result.updated ?? result.deleted ?? 0;
+      const skipped = result.skipped?.length ?? 0;
+      toast({
+        title: `${done} ${done === 1 ? 'item' : 'items'} ${verb}`,
+        description: skipped ? `${skipped} skipped (incompatible or missing).` : undefined,
+        status: skipped ? 'warning' : 'success',
+        duration: 4000,
+        isClosable: true,
+      });
+      setSelectMode(false);
+      setSelectedIds(new Set());
+      await runSearch();
+    },
+    [toast, runSearch]
+  );
+
+  const ids = () => selectedPresent.map((it) => it.item_id);
+
+  const handleChangeLocation = async () => {
+    try {
+      setBulkBusy(true);
+      const result = await updateItemsBulk(ids(), { location_id: locationChoice });
+      locationModal.onClose();
+      await afterBulk('moved', result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleChangeCategory = async () => {
+    try {
+      setBulkBusy(true);
+      // Empty choice clears the category (backend REMOVEs the attribute).
+      const result = await updateItemsBulk(ids(), { category_id: categoryChoice || '' });
+      categoryModal.onClose();
+      await afterBulk('updated', result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      setBulkBusy(true);
+      const result = await deleteItemsBulk(ids());
+      confirmDelete.onClose();
+      await afterBulk('deleted', result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const openLocationModal = () => {
+    setLocationChoice('');
+    locationModal.onOpen();
+  };
+  const openCategoryModal = () => {
+    setCategoryChoice('');
+    categoryModal.onOpen();
+  };
 
   return (
     <Box>
@@ -174,20 +301,156 @@ export default function SearchPage() {
         <>
           <HStack justify="space-between" mb={3}>
             <Text color="gray.500" fontSize="sm">
-              {items.length} {items.length === 1 ? 'item' : 'items'}
+              {selectMode
+                ? `${selectedCount} selected`
+                : `${items.length} ${items.length === 1 ? 'item' : 'items'}`}
             </Text>
+            {selectMode ? (
+              <Button size="sm" variant="ghost" onClick={exitSelectMode}>
+                Done
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setSelectMode(true)}>
+                Select
+              </Button>
+            )}
           </HStack>
+
+          {selectMode && (
+            <Wrap spacing={2} align="center" mb={3}>
+              <WrapItem>
+                <Button
+                  size="sm"
+                  variant="link"
+                  onClick={allSelected ? deselectAll : selectAll}
+                >
+                  {allSelected ? 'Deselect all' : 'Select all'}
+                </Button>
+              </WrapItem>
+              <WrapItem>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={openLocationModal}
+                  isDisabled={selectedCount === 0 || bulkBusy}
+                >
+                  Change location
+                </Button>
+              </WrapItem>
+              <WrapItem>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={openCategoryModal}
+                  isDisabled={selectedCount === 0 || bulkBusy}
+                >
+                  Change category
+                </Button>
+              </WrapItem>
+              <WrapItem>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  colorScheme="red"
+                  onClick={confirmDelete.onOpen}
+                  isDisabled={selectedCount === 0 || bulkBusy}
+                >
+                  Delete
+                </Button>
+              </WrapItem>
+            </Wrap>
+          )}
+
           <VStack spacing={3} align="stretch">
             {items.map((item) => (
               <ItemCard
                 key={item.item_id}
                 item={item}
                 locationName={locationName(item.location_id)}
+                selectable={selectMode}
+                selected={selectedIds.has(item.item_id)}
+                onToggleSelect={toggleSelect}
               />
             ))}
           </VStack>
         </>
       )}
+
+      <Modal isOpen={locationModal.isOpen} onClose={locationModal.onClose} isCentered>
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>Change location</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <FormControl>
+              <FormLabel>
+                Move {selectedCount} {selectedCount === 1 ? 'item' : 'items'} to
+              </FormLabel>
+              <LocationSelect
+                value={locationChoice}
+                onChange={(e) => setLocationChoice(e.target.value)}
+                placeholder="Select a location"
+              />
+            </FormControl>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={locationModal.onClose}>
+              Cancel
+            </Button>
+            <Button
+              colorScheme="brand"
+              onClick={handleChangeLocation}
+              isDisabled={!locationChoice}
+              isLoading={bulkBusy}
+            >
+              Apply
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={categoryModal.isOpen} onClose={categoryModal.onClose} isCentered>
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>Change category</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <FormControl>
+              <FormLabel>
+                Set category on {selectedCount} {selectedCount === 1 ? 'item' : 'items'}
+              </FormLabel>
+              {/* No measureType filter: a mixed selection may include items a
+                  category can't accept; the backend applies where valid and
+                  reports the rest as skipped. */}
+              <CategorySelect
+                value={categoryChoice}
+                onChange={(e) => setCategoryChoice(e.target.value)}
+                placeholder="No category (clear)"
+              />
+            </FormControl>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={categoryModal.onClose}>
+              Cancel
+            </Button>
+            <Button colorScheme="brand" onClick={handleChangeCategory} isLoading={bulkBusy}>
+              Apply
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={confirmDelete.isOpen}
+        onClose={confirmDelete.onClose}
+        onConfirm={handleDelete}
+        isLoading={bulkBusy}
+        title="Delete items"
+        body={`Delete ${selectedCount} ${
+          selectedCount === 1 ? 'item' : 'items'
+        }? This can't be undone.`}
+        confirmLabel="Delete"
+      />
     </Box>
   );
 }

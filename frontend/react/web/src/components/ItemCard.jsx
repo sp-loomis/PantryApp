@@ -11,6 +11,7 @@ import {
   LinkOverlay,
   Card,
   CardBody,
+  Checkbox,
   Flex,
   Box,
   HStack,
@@ -23,7 +24,14 @@ import { formatMeasure } from '@pantry-app/shared';
 import { expiryStatus } from '../utils/dates';
 import MatchHighlight from './MatchHighlight';
 
-export default function ItemCard({ item, locationName, showLocation = true }) {
+export default function ItemCard({
+  item,
+  locationName,
+  showLocation = true,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+}) {
   const measure = formatMeasure(item.dimensions);
   const expiry = expiryStatus(item.use_by_date);
 
@@ -36,7 +44,19 @@ export default function ItemCard({ item, locationName, showLocation = true }) {
     >
       <CardBody py={3}>
         <Flex justify="space-between" align="flex-start" gap={3}>
-          <Box minW={0}>
+          {selectable && (
+            <Checkbox
+              isChecked={selected}
+              onChange={() => onToggleSelect?.(item)}
+              colorScheme="brand"
+              size="lg"
+              mt={0.5}
+              // Keep the checkbox from triggering the card's link overlay.
+              zIndex={1}
+              aria-label={selected ? `Deselect ${item.name}` : `Select ${item.name}`}
+            />
+          )}
+          <Box minW={0} flex="1">
             <LinkOverlay as={RouterLink} to={`/items/${item.item_id}`}>
               <Heading size="sm" noOfLines={1}>
                 {item.match ? (

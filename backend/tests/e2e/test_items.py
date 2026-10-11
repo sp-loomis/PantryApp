@@ -388,3 +388,47 @@ def test_batch_delete_skips_missing(api):
 def test_batch_delete_bad_body_400(api):
     resp = api.call("DELETE", "/items", body={"item_ids": "nope"})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# POST /items/tags (batch tag add)
+# ---------------------------------------------------------------------------
+
+def test_batch_add_tags_happy(api):
+    a = _make_item(api, tags=["fruit"]).body["item"]
+    b = _make_item(api).body["item"]
+
+    resp = api.call(
+        "POST", "/items/tags",
+        body={"item_ids": [a["item_id"], b["item_id"]], "tags": ["Fresh"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.body == {"updated": 2, "skipped": []}
+    # Additive + lowercased.
+    assert api.call("GET", f"/items/{a['item_id']}").body["item"]["tags"] == ["fresh", "fruit"]
+    assert api.call("GET", f"/items/{b['item_id']}").body["item"]["tags"] == ["fresh"]
+
+
+def test_batch_add_tags_skips_missing(api):
+    a = _make_item(api).body["item"]
+
+    resp = api.call(
+        "POST", "/items/tags",
+        body={"item_ids": [a["item_id"], "ghost"], "tags": ["fresh"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.body["updated"] == 1
+    assert resp.body["skipped"] == [{"item_id": "ghost", "reason": "not_found"}]
+
+
+def test_batch_add_tags_empty_tags_400(api):
+    a = _make_item(api).body["item"]
+    resp = api.call("POST", "/items/tags", body={"item_ids": [a["item_id"]], "tags": []})
+    assert resp.status_code == 400
+
+
+def test_batch_add_tags_bad_item_ids_400(api):
+    resp = api.call("POST", "/items/tags", body={"item_ids": "nope", "tags": ["fresh"]})
+    assert resp.status_code == 400

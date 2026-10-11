@@ -34,6 +34,7 @@ export {
   deleteItem,
   updateItemsBulk,
   deleteItemsBulk,
+  addItemsTagsBulk,
   getItemTags,
   addItemTags,
   removeItemTag,

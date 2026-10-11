@@ -529,6 +529,42 @@ def update_items_bulk():
         return {"error": str(e)}, 500
 
 
+@app.post("/items/tags")
+@tracer.capture_method
+def add_items_tags_bulk():
+    """Add tags to a set of items (bulk, additive).
+
+    Body: ``{"item_ids": [...], "tags": [...]}``. Tags are merged into each
+    item's existing set. Two-segment literal path, distinct from the parametric
+    /items/<item_id>/tags route. Missing ids are reported under ``skipped``.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        item_ids = data.get("item_ids")
+        tags = data.get("tags")
+        if not isinstance(item_ids, list) or not all(isinstance(i, str) for i in item_ids):
+            return {"error": "'item_ids' must be a list of strings"}, 400
+        if not isinstance(tags, list) or not tags or not all(isinstance(t, str) for t in tags):
+            return {"error": "'tags' must be a non-empty list of strings"}, 400
+        result = item_service.add_tags_bulk(user_id, item_ids, tags)
+        if result["updated"]:
+            metrics.add_metric(name="ItemUpdated", unit="Count", value=result["updated"])
+        return result
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error in batch tag add: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error adding tags in bulk")
+        return {"error": str(e)}, 500
+
+
 @app.delete("/items")
 @tracer.capture_method
 def delete_items_bulk():

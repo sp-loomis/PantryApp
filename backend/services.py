@@ -790,6 +790,34 @@ class ItemService:
         )
         return {"deleted": deleted, "skipped": skipped}
 
+    def add_tags_bulk(
+        self, user_id: str, item_ids: List[str], tags: List[str]
+    ) -> Dict[str, Any]:
+        """Add ``tags`` to each of ``item_ids`` (additive, not a replace).
+
+        Loops :meth:`add_item_tags`, which merges the new tags into each item's
+        existing set (lowercased, de-duplicated) and keeps the reverse index in
+        sync. Missing ids are collected in ``skipped``.
+
+        Returns ``{"updated": int, "skipped": [{"item_id", "reason"}, ...]}``.
+        """
+        if len(item_ids) > BATCH_MAX:
+            raise ValueError(f"Cannot batch more than {BATCH_MAX} items at once")
+
+        updated = 0
+        skipped: List[Dict[str, str]] = []
+        for item_id in item_ids:
+            if self.add_item_tags(user_id, item_id, tags) is None:
+                skipped.append({"item_id": item_id, "reason": "not_found"})
+            else:
+                updated += 1
+
+        logger.info(
+            f"Batch tag-add touched {updated} items ({len(skipped)} skipped) "
+            f"for user: {user_id}"
+        )
+        return {"updated": updated, "skipped": skipped}
+
     # ------------------------------------------------------------------
     # Tag management (per-item)
     # ------------------------------------------------------------------

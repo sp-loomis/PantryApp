@@ -12,9 +12,8 @@ vi.mock('./apiClient.js', () => ({
   },
 }));
 
-const { createItem, updateItemsBulk, deleteItemsBulk } = await import(
-  './inventoryService.js'
-);
+const { createItem, updateItemsBulk, deleteItemsBulk, addItemsTagsBulk } =
+  await import('./inventoryService.js');
 
 describe('createItem', () => {
   beforeEach(() => {
@@ -80,5 +79,24 @@ describe('deleteItemsBulk', () => {
     expect(result).toEqual({ deleted: 2, skipped: [] });
     expect(del.mock.calls[0][0]).toBe('/items');
     expect(del.mock.calls[0][1]).toEqual({ body: { item_ids: ['a', 'b'] } });
+  });
+});
+
+describe('addItemsTagsBulk', () => {
+  beforeEach(() => {
+    post.mockReset();
+  });
+
+  it('posts the id list and tags to the bulk tag endpoint', async () => {
+    post.mockResolvedValue({ updated: 2, skipped: [] });
+
+    const result = await addItemsTagsBulk(['a', 'b'], ['fresh', 'snack']);
+
+    expect(result).toEqual({ updated: 2, skipped: [] });
+    expect(post.mock.calls[0][0]).toBe('/items/tags');
+    expect(post.mock.calls[0][1]).toEqual({
+      item_ids: ['a', 'b'],
+      tags: ['fresh', 'snack'],
+    });
   });
 });

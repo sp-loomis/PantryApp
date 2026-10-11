@@ -98,6 +98,18 @@ export async function deleteItemsBulk(itemIds) {
   return api.del('/items', { body: { item_ids: itemIds } });
 }
 
+/**
+ * Add tags to many items at once (batch, additive — merged into each item's
+ * existing tags, not a replace).
+ *
+ * @param {string[]} itemIds
+ * @param {string[]} tags
+ * @returns {Promise<{updated: number, skipped: {item_id: string, reason: string}[]}>}
+ */
+export async function addItemsTagsBulk(itemIds, tags) {
+  return api.post('/items/tags', { item_ids: itemIds, tags });
+}
+
 // ---------------------------------------------------------------------------
 // Item tags
 // ---------------------------------------------------------------------------

@@ -349,6 +349,44 @@ def test_delete_items_bulk_over_cap_rejected(services):
         item_service.delete_items_bulk(USER, too_many)
 
 
+def test_add_tags_bulk_merges_into_existing(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc", tags=["fruit"])
+    b = item_service.create_item(USER, "Pear", "loc")
+
+    result = item_service.add_tags_bulk(
+        USER, [a["item_id"], b["item_id"]], ["Fresh", "SNACK"]
+    )
+
+    assert result == {"updated": 2, "skipped": []}
+    # Additive + lowercased: existing "fruit" kept, new ones merged.
+    assert item_service.get_item(USER, a["item_id"])["tags"] == ["fresh", "fruit", "snack"]
+    assert item_service.get_item(USER, b["item_id"])["tags"] == ["fresh", "snack"]
+    # Reverse index reflects the additions.
+    assert {i["item_id"] for i in item_service.get_items_by_tag(USER, "snack")} == {
+        a["item_id"],
+        b["item_id"],
+    }
+
+
+def test_add_tags_bulk_skips_missing(services):
+    item_service, _, _ = services
+    a = item_service.create_item(USER, "Apple", "loc")
+
+    result = item_service.add_tags_bulk(USER, [a["item_id"], "ghost"], ["fresh"])
+
+    assert result["updated"] == 1
+    assert result["skipped"] == [{"item_id": "ghost", "reason": "not_found"}]
+
+
+def test_add_tags_bulk_over_cap_rejected(services):
+    item_service, _, _ = services
+    from services import BATCH_MAX
+    too_many = [f"id-{i}" for i in range(BATCH_MAX + 1)]
+    with pytest.raises(ValueError):
+        item_service.add_tags_bulk(USER, too_many, ["fresh"])
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

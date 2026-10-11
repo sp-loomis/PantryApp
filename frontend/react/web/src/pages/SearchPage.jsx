@@ -41,10 +41,12 @@ import {
   listTags,
   updateItemsBulk,
   deleteItemsBulk,
+  addItemsTagsBulk,
 } from '@pantry-app/shared';
 import { useInventoryContext } from '../contexts/InventoryContext';
 import LocationSelect from '../components/LocationSelect';
 import CategorySelect from '../components/CategorySelect';
+import TagInput from '../components/TagInput';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ItemCard from '../components/ItemCard';
 import EmptyState from '../components/EmptyState';
@@ -74,9 +76,11 @@ export default function SearchPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [locationChoice, setLocationChoice] = useState('');
   const [categoryChoice, setCategoryChoice] = useState('');
+  const [tagChoice, setTagChoice] = useState([]);
   const toast = useToast();
   const locationModal = useDisclosure();
   const categoryModal = useDisclosure();
+  const tagModal = useDisclosure();
   const confirmDelete = useDisclosure();
 
   // Load the tag list once for the tag filter.
@@ -196,6 +200,19 @@ export default function SearchPage() {
     }
   };
 
+  const handleAddTags = async () => {
+    try {
+      setBulkBusy(true);
+      const result = await addItemsTagsBulk(ids(), tagChoice);
+      tagModal.onClose();
+      await afterBulk('tagged', result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const handleDelete = async () => {
     try {
       setBulkBusy(true);
@@ -216,6 +233,10 @@ export default function SearchPage() {
   const openCategoryModal = () => {
     setCategoryChoice('');
     categoryModal.onOpen();
+  };
+  const openTagModal = () => {
+    setTagChoice([]);
+    tagModal.onOpen();
   };
 
   return (
@@ -351,6 +372,16 @@ export default function SearchPage() {
                 <Button
                   size="sm"
                   variant="outline"
+                  onClick={openTagModal}
+                  isDisabled={selectedCount === 0 || bulkBusy}
+                >
+                  Add tags
+                </Button>
+              </WrapItem>
+              <WrapItem>
+                <Button
+                  size="sm"
+                  variant="outline"
                   colorScheme="red"
                   onClick={confirmDelete.onOpen}
                   isDisabled={selectedCount === 0 || bulkBusy}
@@ -435,6 +466,36 @@ export default function SearchPage() {
               Cancel
             </Button>
             <Button colorScheme="brand" onClick={handleChangeCategory} isLoading={bulkBusy}>
+              Apply
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={tagModal.isOpen} onClose={tagModal.onClose} isCentered>
+        <ModalOverlay />
+        <ModalContent mx={4}>
+          <ModalHeader>Add tags</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <FormControl>
+              <FormLabel>
+                Add tags to {selectedCount} {selectedCount === 1 ? 'item' : 'items'}
+              </FormLabel>
+              {/* Additive: tags merge into each item's existing set. */}
+              <TagInput tags={tagChoice} onChange={setTagChoice} />
+            </FormControl>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={tagModal.onClose}>
+              Cancel
+            </Button>
+            <Button
+              colorScheme="brand"
+              onClick={handleAddTags}
+              isDisabled={tagChoice.length === 0}
+              isLoading={bulkBusy}
+            >
               Apply
             </Button>
           </ModalFooter>

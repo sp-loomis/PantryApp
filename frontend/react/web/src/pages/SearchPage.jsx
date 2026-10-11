@@ -419,12 +419,13 @@ export default function SearchPage() {
               <FormLabel>
                 Set category on {selectedCount} {selectedCount === 1 ? 'item' : 'items'}
               </FormLabel>
-              {/* No measureType filter: a mixed selection may include items a
-                  category can't accept; the backend applies where valid and
-                  reports the rest as skipped. */}
+              {/* includeAllTypes: a mixed selection may include items a category
+                  can't accept; offer every category and let the backend apply
+                  where valid, reporting the rest as skipped. */}
               <CategorySelect
                 value={categoryChoice}
                 onChange={(e) => setCategoryChoice(e.target.value)}
+                includeAllTypes
                 placeholder="No category (clear)"
               />
             </FormControl>

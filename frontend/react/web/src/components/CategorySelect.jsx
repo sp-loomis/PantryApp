@@ -6,6 +6,10 @@
  * that measure can join are offered: `count` categories accept any item; a
  * `weight`/`volume` category needs a matching dimension, so it appears only when
  * the item's measure type matches.
+ *
+ * Pass `includeAllTypes` to skip that filter entirely and offer every category —
+ * for batch assignment over a mixed selection, where per-item compatibility is
+ * resolved server-side rather than in the picker.
  */
 
 import { useEffect, useState } from 'react';
@@ -21,6 +25,7 @@ export default function CategorySelect({
   value,
   onChange,
   measureType,
+  includeAllTypes = false,
   placeholder = 'No category',
   ...props
 }) {
@@ -36,7 +41,9 @@ export default function CategorySelect({
     };
   }, []);
 
-  const options = categories.filter((c) => compatible(c, measureType));
+  const options = includeAllTypes
+    ? categories
+    : categories.filter((c) => compatible(c, measureType));
   // Keep a currently-selected-but-now-incompatible category visible so editing an
   // item doesn't silently drop its assignment.
   const selectedMissing = value && !options.some((c) => c.category_id === value);

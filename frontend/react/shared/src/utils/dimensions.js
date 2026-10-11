@@ -79,6 +79,17 @@ export function formatDimension(dimension) {
   return `${dimension.value} ${dimension.unit}`;
 }
 
+/**
+ * Trim trailing zeros off an aggregate total for display (e.g. 4.20 → "4.2",
+ * 6.0 → "6"). Mirrors backend `slack_blocks.formatTotal` so the SPA, the
+ * message log and Slack render category totals identically.
+ */
+export function formatTotal(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return String(value);
+  return Number(num.toFixed(2)).toString();
+}
+
 /** Render an item's weight/volume measure as a short string, or '' if none. */
 export function formatMeasure(dimensions = []) {
   const found = dimensions.find(

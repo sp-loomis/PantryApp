@@ -838,7 +838,8 @@ def search_items():
             search_kwargs['min_score'] = min_score
 
         items = item_service.search_items(**search_kwargs)
-        return {"items": items}
+        category_totals = item_service.aggregate_items_by_category(user_id, items)
+        return {"items": items, "category_totals": category_totals}
     except AuthenticationError as e:
         logger.warning(f"Unauthenticated request: {str(e)}")
         return {"error": str(e)}, 401

@@ -969,11 +969,7 @@ class ItemService:
 
         # Per-category rollup over the same matched items (empty without a
         # CategoryService or when no matched item carries a category).
-        by_category = []
-        if self.category_service is not None:
-            by_category = aggregate_by_category(
-                items, self.category_service.list_categories(user_id)
-            )
+        by_category = self.aggregate_items_by_category(user_id, items)
 
         return {
             "total_items": total_items,
@@ -981,6 +977,22 @@ class ItemService:
             "aggregated_dimensions": dimensions_dict,
             "by_category": by_category,
         }
+
+    def aggregate_items_by_category(
+        self, user_id: str, items: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Roll up the given items into per-category totals.
+
+        Returns an empty list when no ``CategoryService`` is attached or when
+        none of the items carry a known category. Each total is shaped
+        ``{category_id, name, measure_type, value, unit}`` (see
+        ``dimensions.aggregate_by_category``).
+        """
+        if self.category_service is None:
+            return []
+        return aggregate_by_category(
+            items, self.category_service.list_categories(user_id)
+        )
 
     # ------------------------------------------------------------------
     # Helpers

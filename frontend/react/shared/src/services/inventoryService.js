@@ -141,9 +141,11 @@ export async function listTags() {
 /**
  * Fuzzy search.
  * @param {{name?, location_id?, tags?, use_by_date_start?, use_by_date_end?, min_score?}} criteria
- * @returns items; when `name` is given each item carries a `match` object.
+ * @returns {Promise<{items, categoryTotals}>} the matched items (each carrying a
+ *   `match` object when `name` is given) plus a per-category rollup over those
+ *   same items, each `{category_id, name, measure_type, value, unit}`.
  */
 export async function searchItems(criteria = {}) {
   const data = await api.post('/search', criteria);
-  return data.items;
+  return { items: data.items, categoryTotals: data.category_totals || [] };
 }

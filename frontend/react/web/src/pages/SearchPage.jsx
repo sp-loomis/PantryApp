@@ -49,6 +49,7 @@ import CategorySelect from '../components/CategorySelect';
 import TagInput from '../components/TagInput';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ItemCard from '../components/ItemCard';
+import CategorySummaryCards from '../components/CategorySummaryCards';
 import EmptyState from '../components/EmptyState';
 import ErrorMessage from '../components/ErrorMessage';
 import ExpiryFilter from '../components/ExpiryFilter';
@@ -65,6 +66,7 @@ export default function SearchPage() {
 
   const [tagOptions, setTagOptions] = useState([]);
   const [items, setItems] = useState([]);
+  const [categoryTotals, setCategoryTotals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -108,7 +110,9 @@ export default function SearchPage() {
     try {
       setLoading(true);
       setError(null);
-      setItems(await searchItems(criteria));
+      const { items: found, categoryTotals: totals } = await searchItems(criteria);
+      setItems(found);
+      setCategoryTotals(totals);
     } catch (err) {
       setError(err);
     } finally {
@@ -320,6 +324,7 @@ export default function SearchPage() {
         />
       ) : (
         <>
+          <CategorySummaryCards totals={categoryTotals} />
           <HStack justify="space-between" mb={3}>
             <Text color="gray.500" fontSize="sm">
               {selectMode

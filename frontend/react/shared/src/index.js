@@ -114,5 +114,6 @@ export {
   measureToDimensions,
   dimensionsToMeasure,
   formatDimension,
-  formatMeasure
+  formatMeasure,
+  formatTotal
 } from './utils/dimensions.js';

@@ -5,6 +5,7 @@ import {
   measureToDimensions,
   dimensionsToMeasure,
   formatMeasure,
+  formatTotal,
   isValidUnit,
 } from './dimensions.js';
 
@@ -82,5 +83,16 @@ describe('formatMeasure', () => {
   });
   it('returns empty string when there is no measure', () => {
     expect(formatMeasure([])).toBe('');
+  });
+});
+
+describe('formatTotal', () => {
+  it('trims trailing zeros', () => {
+    expect(formatTotal(4.2)).toBe('4.2');
+    expect(formatTotal(6.0)).toBe('6');
+    expect(formatTotal(5.004)).toBe('5');
+  });
+  it('passes through non-numeric values as strings', () => {
+    expect(formatTotal('n/a')).toBe('n/a');
   });
 });

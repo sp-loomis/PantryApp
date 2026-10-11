@@ -9,18 +9,12 @@
 
 import { Box, Checkbox, Heading, Link, Table, Tbody, Td, Text, Tr, Wrap, WrapItem } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router-dom';
+import { formatTotal } from '@pantry-app/shared';
 
 import { formatDate } from '../utils/dates';
 import { resolveTaskRow } from '../utils/reportTasks';
 import { recurrenceLabel } from '../utils/taskStatus';
 import DecisionButtons from './DecisionButtons';
-
-/** Trim trailing zeros off an aggregate value for display (mirrors slack_blocks). */
-function formatTotal(value) {
-  const num = Number(value);
-  if (Number.isNaN(num)) return String(value);
-  return Number(num.toFixed(2)).toString();
-}
 
 /**
  * Per-category aggregate rollup shown under an item_query table. Mirrors the

@@ -12,7 +12,7 @@ vi.mock('./apiClient.js', () => ({
   },
 }));
 
-const { createItem, updateItemsBulk, deleteItemsBulk, addItemsTagsBulk } =
+const { createItem, updateItemsBulk, deleteItemsBulk, addItemsTagsBulk, searchItems } =
   await import('./inventoryService.js');
 
 describe('createItem', () => {
@@ -44,6 +44,37 @@ describe('createItem', () => {
     expect(Array.isArray(result)).toBe(true);
     expect(result).toHaveLength(3);
     expect(result.map((i) => i.item_id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('searchItems', () => {
+  beforeEach(() => {
+    post.mockReset();
+  });
+
+  it('returns items and the per-category rollup from the /search envelope', async () => {
+    post.mockResolvedValue({
+      items: [{ item_id: 'a', name: 'Ribeye' }],
+      category_totals: [
+        { category_id: 'c1', name: 'Beef', measure_type: 'weight', value: 5, unit: 'lb' },
+      ],
+    });
+
+    const result = await searchItems({ location_id: 'fridge' });
+
+    expect(post).toHaveBeenCalledWith('/search', { location_id: 'fridge' });
+    expect(result.items).toHaveLength(1);
+    expect(result.categoryTotals).toEqual([
+      { category_id: 'c1', name: 'Beef', measure_type: 'weight', value: 5, unit: 'lb' },
+    ]);
+  });
+
+  it('defaults categoryTotals to an empty array when the field is absent', async () => {
+    post.mockResolvedValue({ items: [] });
+
+    const result = await searchItems();
+
+    expect(result.categoryTotals).toEqual([]);
   });
 });
 

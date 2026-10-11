@@ -161,3 +161,61 @@ def test_search_by_date_range(api):
 
     assert resp.status_code == 200
     assert [i["name"] for i in resp.body["items"]] == ["Bread"]
+
+
+# ---------------------------------------------------------------------------
+# Per-category rollup (category_totals) over the matched items
+# ---------------------------------------------------------------------------
+
+def test_search_category_totals_empty_without_categories(api):
+    _seed(api)
+
+    resp = api.call("POST", "/search", body={})
+
+    assert resp.status_code == 200
+    assert resp.body["category_totals"] == []
+
+
+def test_search_category_totals_sum_matched_items(api):
+    cat = api.call("POST", "/categories",
+                   body={"name": "Beef", "measure_type": "weight",
+                         "preferred_unit": "lb"}).body["category"]
+    for lb in (2, 3):
+        api.call("POST", "/items", body={
+            "name": "cut", "location_id": "fridge",
+            "category_id": cat["category_id"],
+            "dimensions": [{"dimension_type": "weight", "value": lb, "unit": "lb"}],
+        })
+
+    resp = api.call("POST", "/search", body={})
+
+    assert resp.status_code == 200
+    by_cat = {c["category_id"]: c for c in resp.body["category_totals"]}
+    total = by_cat[cat["category_id"]]
+    assert total["name"] == "Beef"
+    assert total["measure_type"] == "weight"
+    assert total["value"] == 5.0
+    assert total["unit"] == "lb"
+
+
+def test_search_category_totals_respect_filters(api):
+    cat = api.call("POST", "/categories",
+                   body={"name": "Beef", "measure_type": "weight",
+                         "preferred_unit": "lb"}).body["category"]
+    api.call("POST", "/items", body={
+        "name": "fridge cut", "location_id": "fridge",
+        "category_id": cat["category_id"],
+        "dimensions": [{"dimension_type": "weight", "value": 2, "unit": "lb"}],
+    })
+    api.call("POST", "/items", body={
+        "name": "freezer cut", "location_id": "freezer",
+        "category_id": cat["category_id"],
+        "dimensions": [{"dimension_type": "weight", "value": 3, "unit": "lb"}],
+    })
+
+    resp = api.call("POST", "/search", body={"location_id": "fridge"})
+
+    assert resp.status_code == 200
+    by_cat = {c["category_id"]: c for c in resp.body["category_totals"]}
+    # Only the fridge item counts toward the rollup.
+    assert by_cat[cat["category_id"]]["value"] == 2.0

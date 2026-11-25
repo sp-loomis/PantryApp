@@ -58,14 +58,31 @@ def _date_only(value):
     return value.split("T", 1)[0]
 
 
-def _has_ledger_events(ledger_table, user_id, entity_type, entity_id):
+def _has_event_of_type(ledger_table, user_id, entity_type, entity_id, event_type):
+    """True if this entity already has a ``event_type`` event in the ledger.
+
+    Keyed on the specific baseline event (not "any event") so an entity that was
+    only *edited* in the deploy->migrate window — and therefore already carries,
+    say, an item_adjusted event — still gets its missing baseline backfilled.
+    Re-runs stay idempotent because a backfilled (or normally-created) baseline
+    is then found and skipped.
+    """
     resp = ledger_table.query(
         IndexName="EntityIndex",
         KeyConditionExpression=Key("user_id").eq(user_id)
         & Key("entity_sk").begins_with(f"{entity_type}#{entity_id}#"),
-        Limit=1,
     )
-    return bool(resp.get("Items"))
+    while True:
+        if any(e.get("event_type") == event_type for e in resp.get("Items", [])):
+            return True
+        if "LastEvaluatedKey" not in resp:
+            return False
+        resp = ledger_table.query(
+            IndexName="EntityIndex",
+            KeyConditionExpression=Key("user_id").eq(user_id)
+            & Key("entity_sk").begins_with(f"{entity_type}#{entity_id}#"),
+            ExclusiveStartKey=resp["LastEvaluatedKey"],
+        )
 
 
 def migrate(dynamodb, dry_run=False):
@@ -90,10 +107,10 @@ def migrate(dynamodb, dry_run=False):
                     ExpressionAttributeValues={":d": new_date},
                 )
 
-        # Backfill only active items, and only once.
+        # Backfill an item_created baseline for active items that lack one.
         if item.get("deleted_at"):
             continue
-        if _has_ledger_events(ledger_table, user_id, ENTITY_ITEM, item_id):
+        if _has_event_of_type(ledger_table, user_id, ENTITY_ITEM, item_id, EVENT_ITEM_CREATED):
             continue
         stats["item_events"] += 1
         if not dry_run:
@@ -116,7 +133,9 @@ def migrate(dynamodb, dry_run=False):
             continue
         user_id = task["user_id"]
         task_id = task["task_id"]
-        if _has_ledger_events(ledger_table, user_id, ENTITY_TASK, task_id):
+        # The single last_completed_at is the only recoverable completion; skip if
+        # a completion event already exists (live post-deploy or a prior backfill).
+        if _has_event_of_type(ledger_table, user_id, ENTITY_TASK, task_id, EVENT_TASK_COMPLETED):
             continue
         stats["task_events"] += 1
         if not dry_run:

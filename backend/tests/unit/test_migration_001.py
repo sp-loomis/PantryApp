@@ -73,6 +73,34 @@ def test_idempotent(dynamodb_tables, monkeypatch):
     assert len(dynamodb_tables.Table(LEDGER_TABLE).scan()["Items"]) == 1
 
 
+def test_backfills_baseline_even_when_adjusted_event_exists(dynamodb_tables, monkeypatch):
+    """An item touched in the deploy->migrate window (has an item_adjusted but no
+    item_created) still gets its item_created baseline backfilled."""
+    _env(monkeypatch)
+    items = dynamodb_tables.Table(ITEMS_TABLE)
+    ledger = dynamodb_tables.Table(LEDGER_TABLE)
+
+    from models import LedgerEvent, ENTITY_ITEM, EVENT_ITEM_ADJUSTED, EVENT_ITEM_CREATED
+
+    items.put_item(Item={
+        "user_id": USER, "item_id": "i1", "name": "Milk", "location_id": "fridge", "tags": [],
+    })
+    # Simulate a post-deploy edit: only an adjusted event exists, no baseline.
+    ledger.put_item(Item=LedgerEvent.create(USER, ENTITY_ITEM, "i1", EVENT_ITEM_ADJUSTED).to_dict())
+
+    stats = migration_001.migrate(dynamodb_tables)
+
+    assert stats["item_events"] == 1
+    types = {
+        e["event_type"]
+        for e in ledger.scan()["Items"]
+        if e["entity_id"] == "i1"
+    }
+    assert types == {EVENT_ITEM_ADJUSTED, EVENT_ITEM_CREATED}
+    # And a re-run now finds the baseline and skips.
+    assert migration_001.migrate(dynamodb_tables)["item_events"] == 0
+
+
 def test_dry_run_writes_nothing(dynamodb_tables, monkeypatch):
     _env(monkeypatch)
     items = dynamodb_tables.Table(ITEMS_TABLE)

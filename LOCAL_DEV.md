@@ -50,6 +50,42 @@ auto-generate. Two ways to exercise generation locally:
   "
   ```
 
+## Ledger & analytics locally
+
+Every create / edit / consume / delete of an item, and every task completion,
+appends an immutable event to the **ledger** table (`pantry-local-ledger`). That
+table exists locally (created by `seed_local.py`), so you can inspect per-entity
+history directly, e.g.:
+
+```bash
+cd backend
+python -c "
+import os, boto3
+os.environ.setdefault('AWS_DEFAULT_REGION','us-east-1')
+os.environ.setdefault('AWS_ACCESS_KEY_ID','local'); os.environ.setdefault('AWS_SECRET_ACCESS_KEY','local')
+from local_schema import LEDGER_TABLE
+t = boto3.resource('dynamodb', endpoint_url='http://localhost:8001').Table(LEDGER_TABLE)
+print(t.scan()['Items'])
+"
+```
+
+**The S3 → Glue → Athena analytics tier has no local equivalent.** In AWS the
+ledger's DynamoDB stream triggers a consumer Lambda that writes partitioned JSONL
+to S3 for Athena; locally there is no stream consumer, S3, or Athena (no
+localstack). The ledger table itself is fully exercised locally; the analytics
+mirror is validated against a deployed environment (see `terraform/modules/main/analytics.tf`).
+
+To backfill the ledger for inventory/tasks that predate it, run the migration
+(it reads the same `*_TABLE_NAME` env vars the Lambda uses, so export the local
+names first):
+
+```bash
+cd backend
+export AWS_DEFAULT_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local
+export $(python -c "from local_schema import TABLE_NAMES; print(' '.join(f'{k}={v}' for k,v in TABLE_NAMES.items()))")
+python -I migrations/001_ledger_and_softdelete.py --endpoint-url http://localhost:8001 --dry-run
+```
+
 ## Slack integration locally
 
 Real Slack OAuth needs a public HTTPS callback (`/slack/oauth/callback`), which
@@ -58,18 +94,17 @@ connect** instead of real OAuth: the shim sets `ENVIRONMENT=local`, which flips
 `SlackService` into a no-network mode — passthrough token "encryption" (no KMS),
 a stubbed app secret, and canned Slack API responses (fake channels, ok posts).
 
-Create a fake connection (no real Slack) and exercise the whole flow:
+Create a fake connection (no real Slack) and exercise the whole flow via the shim
+on `:8000` (the web app's **Settings → Integrations** drives the same endpoints):
 
 ```bash
-# via the CLI (invokes the Lambda directly)
-cd frontend/cli
-python pantry_cli.py slack connections list        # []
-# dev-stub has no CLI command; use the web app button or curl the shim:
+curl http://localhost:8000/slack/connections                 # []
 curl -X POST http://localhost:8000/slack/connections/dev-stub \
   -H 'Content-Type: application/json' -d '{"team_name":"Local Dev Workspace"}'
-python pantry_cli.py slack channels list <connection_id>   # canned: general, random
-python pantry_cli.py slack test <connection_id> --channel C_LOCAL_GENERAL
-python pantry_cli.py slack disconnect <connection_id>
+curl http://localhost:8000/slack/connections/<connection_id>/channels   # canned: general, random
+curl -X POST http://localhost:8000/slack/connections/<connection_id>/test \
+  -H 'Content-Type: application/json' -d '{"channel_id":"C_LOCAL_GENERAL"}'
+curl -X DELETE http://localhost:8000/slack/connections/<connection_id>
 ```
 
 In the web app: **Settings → Integrations** shows an **Add dev stub** button (only

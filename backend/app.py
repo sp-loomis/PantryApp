@@ -16,8 +16,8 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig, Response
 
 from services import (
-    ItemService, LocationService, CategoryService, TagService, TaskService,
-    ReportService, MessageService, ReportGenerator, SlackService,
+    ItemService, LocationService, CategoryService, TaskService,
+    ReportService, MessageService, ReportGenerator, SlackService, LedgerService,
 )
 from report_conditions import evaluate_trigger
 from dimensions import DimensionType, WeightUnit, VolumeUnit
@@ -45,8 +45,8 @@ dynamodb = boto3.resource('dynamodb')
 ITEMS_TABLE = os.environ.get('ITEMS_TABLE_NAME')
 LOCATIONS_TABLE = os.environ.get('LOCATIONS_TABLE_NAME')
 CATEGORIES_TABLE = os.environ.get('CATEGORIES_TABLE_NAME')
-ITEM_TAGS_TABLE = os.environ.get('ITEM_TAGS_TABLE_NAME')
 TASKS_TABLE = os.environ.get('TASKS_TABLE_NAME')
+LEDGER_TABLE = os.environ.get('LEDGER_TABLE_NAME')
 REPORTS_TABLE = os.environ.get('REPORTS_TABLE_NAME')
 MESSAGES_TABLE = os.environ.get('MESSAGES_TABLE_NAME')
 SLACK_CONNECTIONS_TABLE = os.environ.get('SLACK_CONNECTIONS_TABLE_NAME')
@@ -78,6 +78,17 @@ def _slack_spa_base() -> str:
     base = WEB_APP_URL or ('' if allowed_origin == '*' else allowed_origin)
     return base.rstrip('/')
 
+
+def _server_error():
+    """Generic 500 body for unexpected errors.
+
+    The real exception is logged by the caller (``logger.exception``); the client
+    gets a fixed, non-revealing message so internal details never leak in the
+    response body.
+    """
+    return {"error": "Internal server error"}, 500
+
+
 # Initialize services
 location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
 # CategoryService holds the items table too, to clear category_id off items when a
@@ -86,11 +97,13 @@ category_service = CategoryService(
     dynamodb.Table(CATEGORIES_TABLE) if CATEGORIES_TABLE else None,
     dynamodb.Table(ITEMS_TABLE),
 )
+# Append-only domain-event ledger (history / analytics). Optional: when the table
+# isn't configured, services run without emitting (emits are best-effort anyway).
+ledger_service = LedgerService(dynamodb.Table(LEDGER_TABLE)) if LEDGER_TABLE else None
 item_service = ItemService(
-    dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE), category_service
+    dynamodb.Table(ITEMS_TABLE), category_service, ledger_service=ledger_service
 )
-tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
-task_service = TaskService(dynamodb.Table(TASKS_TABLE))
+task_service = TaskService(dynamodb.Table(TASKS_TABLE), ledger_service=ledger_service)
 report_service = ReportService(dynamodb.Table(REPORTS_TABLE), category_service)
 message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
 
@@ -167,7 +180,7 @@ def create_location():
     except Exception as e:
         logger.exception("Error creating location")
         metrics.add_metric(name="LocationCreationError", unit="Count", value=1)
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/locations")
@@ -186,7 +199,7 @@ def list_locations():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing locations")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/locations/<location_id>")
@@ -207,7 +220,7 @@ def get_location(location_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting location")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.put("/locations/<location_id>")
@@ -230,7 +243,7 @@ def update_location(location_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error updating location")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/locations/<location_id>")
@@ -252,7 +265,7 @@ def delete_location(location_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting location")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -294,7 +307,7 @@ def create_category():
     except Exception as e:
         logger.exception("Error creating category")
         metrics.add_metric(name="CategoryCreationError", unit="Count", value=1)
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/categories")
@@ -313,7 +326,7 @@ def list_categories():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing categories")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/categories/units")
@@ -335,7 +348,7 @@ def list_measure_units():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing measure units")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/categories/<category_id>")
@@ -356,7 +369,7 @@ def get_category(category_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting category")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.put("/categories/<category_id>")
@@ -382,7 +395,7 @@ def update_category(category_id: str):
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error updating category")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/categories/<category_id>")
@@ -404,7 +417,7 @@ def delete_category(category_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting category")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -462,7 +475,7 @@ def create_item():
     except Exception as e:
         logger.exception("Error creating item")
         metrics.add_metric(name="ItemCreationError", unit="Count", value=1)
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/items")
@@ -488,7 +501,7 @@ def list_items():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing items")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # Literal /items bulk routes are registered before the parametric
@@ -526,7 +539,7 @@ def update_items_bulk():
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error updating items in bulk")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/items/tags")
@@ -562,7 +575,7 @@ def add_items_tags_bulk():
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error adding tags in bulk")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/items")
@@ -594,7 +607,7 @@ def delete_items_bulk():
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error deleting items in bulk")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/items/expiring")
@@ -623,7 +636,7 @@ def get_expiring_items():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting expiring items")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/items/<item_id>/tags")
@@ -644,7 +657,7 @@ def get_item_tags(item_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting item tags")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/items/<item_id>/tags")
@@ -671,7 +684,7 @@ def add_item_tags(item_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error adding item tags")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/items/<item_id>/tags/<tag>")
@@ -693,7 +706,7 @@ def remove_item_tag(item_id: str, tag: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error removing item tag")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/items/<item_id>")
@@ -714,7 +727,7 @@ def get_item(item_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting item")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.put("/items/<item_id>")
@@ -742,13 +755,48 @@ def update_item(item_id: str):
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error updating item")
-        return {"error": str(e)}, 500
+        return _server_error()
+
+
+@app.post("/items/<item_id>/consume")
+@tracer.capture_method
+def consume_item(item_id: str):
+    """Record genuine usage of an item (distinct from deletion).
+
+    Body: an optional ``amount`` dimension ``{dimension_type, value, unit}`` to
+    deduct; omit it (or send ``{}``) to consume the whole item. Decrements the
+    matching dimension and appends an ``item_consumed`` event; consuming the last
+    of it depletes (soft-deletes) the item.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        amount = data.get("amount")
+        result = item_service.consume_item(user_id, item_id, amount)
+        if result is None:
+            return {"error": "Item not found"}, 404
+        metrics.add_metric(name="ItemConsumed", unit="Count", value=1)
+        if result.get("depleted"):
+            return {"item": result, "depleted": True}
+        return {"item": result}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error consuming item: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error consuming item")
+        return _server_error()
 
 
 @app.delete("/items/<item_id>")
 @tracer.capture_method
 def delete_item(item_id: str):
-    """Delete an inventory item (mark as used)."""
+    """Soft-delete an inventory item (data removal, not a consumption)."""
     try:
         user_id = _current_user_id()
         success = item_service.delete_item(user_id, item_id)
@@ -764,7 +812,7 @@ def delete_item(item_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting item")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -787,7 +835,7 @@ def list_tags():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing tags")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -851,7 +899,7 @@ def search_items():
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error searching items")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/aggregate")
@@ -887,7 +935,7 @@ def get_aggregate_stats():
         return {"error": f"Invalid unit: {str(e)}"}, 400
     except Exception as e:
         logger.exception("Error getting aggregate stats")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -938,7 +986,7 @@ def create_task():
     except Exception as e:
         logger.exception("Error creating task")
         metrics.add_metric(name="TaskCreationError", unit="Count", value=1)
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/tasks")
@@ -964,7 +1012,7 @@ def list_tasks():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing tasks")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/task-tags")
@@ -983,7 +1031,7 @@ def list_task_tags():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing task tags")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/tasks/<task_id>/complete")
@@ -1014,7 +1062,7 @@ def complete_task(task_id: str):
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error completing task")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/tasks/<task_id>/uncomplete")
@@ -1036,7 +1084,7 @@ def uncomplete_task(task_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error uncompleting task")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/tasks/<task_id>")
@@ -1057,7 +1105,7 @@ def get_task(task_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting task")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.put("/tasks/<task_id>")
@@ -1085,7 +1133,7 @@ def update_task(task_id: str):
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error updating task")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/tasks/<task_id>")
@@ -1107,7 +1155,7 @@ def delete_task(task_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting task")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -1153,7 +1201,7 @@ def create_report():
     except Exception as e:
         logger.exception("Error creating report")
         metrics.add_metric(name="ReportCreationError", unit="Count", value=1)
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/reports")
@@ -1172,7 +1220,7 @@ def list_reports():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing reports")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/reports/<report_id>/run")
@@ -1195,7 +1243,7 @@ def run_report(report_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error running report")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/reports/<report_id>/preview")
@@ -1222,7 +1270,7 @@ def preview_report(report_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error previewing report")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/reports/<report_id>")
@@ -1243,7 +1291,7 @@ def get_report(report_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting report")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.put("/reports/<report_id>")
@@ -1269,7 +1317,7 @@ def update_report(report_id: str):
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error updating report")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/reports/<report_id>")
@@ -1291,7 +1339,7 @@ def delete_report(report_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting report")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -1326,7 +1374,7 @@ def mark_messages_read_bulk():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error marking messages read in bulk")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/messages")
@@ -1355,7 +1403,7 @@ def delete_messages_bulk():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting messages in bulk")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/messages/unread")
@@ -1374,7 +1422,7 @@ def list_unread_messages():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing unread messages")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/messages")
@@ -1393,7 +1441,7 @@ def list_messages():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing messages")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/messages/<message_id>/read")
@@ -1414,7 +1462,7 @@ def mark_message_read(message_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error marking message read")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/messages/<message_id>/unread")
@@ -1435,7 +1483,7 @@ def mark_message_unread(message_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error marking message unread")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/messages/<message_id>")
@@ -1456,7 +1504,7 @@ def get_message(message_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error getting message")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/messages/<message_id>")
@@ -1478,7 +1526,7 @@ def delete_message(message_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error deleting message")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 # ============================================================================
@@ -1554,7 +1602,7 @@ def slack_oauth_start():
         return {"error": str(e)}, 400
     except Exception as e:
         logger.exception("Error starting Slack OAuth")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/slack/oauth/callback")
@@ -1601,7 +1649,7 @@ def list_slack_connections():
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error listing Slack connections")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.get("/slack/connections/<connection_id>/channels")
@@ -1621,7 +1669,7 @@ def list_slack_channels(connection_id: str):
         return {"error": str(e)}, 404
     except Exception as e:
         logger.exception("Error listing Slack channels")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.delete("/slack/connections/<connection_id>")
@@ -1642,7 +1690,7 @@ def disconnect_slack(connection_id: str):
         return {"error": str(e)}, 403
     except Exception as e:
         logger.exception("Error disconnecting Slack")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/slack/connections/<connection_id>/test")
@@ -1670,7 +1718,7 @@ def test_slack_connection(connection_id: str):
         return {"error": str(e)}, 404
     except Exception as e:
         logger.exception("Error testing Slack connection")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 @app.post("/slack/connections/dev-stub")
@@ -1694,7 +1742,7 @@ def slack_dev_stub_connect():
         return {"error": str(e)}, 401
     except Exception as e:
         logger.exception("Error creating Slack dev stub")
-        return {"error": str(e)}, 500
+        return _server_error()
 
 
 def _is_scheduled_event(event: Dict[str, Any]) -> bool:

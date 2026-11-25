@@ -8,6 +8,15 @@ from datetime import datetime, timezone
 import uuid
 
 
+def now_iso() -> str:
+    """Current UTC time as a full ISO-8601 string (the one timestamp convention).
+
+    Shared by the model ``created_at``/``updated_at`` defaults and the service
+    layer (``services._now_iso``) so every timestamp is minted identically.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class Location:
     """Storage location model."""
@@ -15,8 +24,8 @@ class Location:
     location_id: str
     name: str
     description: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(cls, user_id: str, name: str, description: str = "") -> "Location":
@@ -59,8 +68,8 @@ class Category:
     measure_type: str
     preferred_unit: Optional[str] = None
     description: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(
@@ -107,8 +116,11 @@ class Item:
     category_id: Optional[str] = None  # At most one category (FK to Category)
     use_by_date: Optional[str] = None
     notes: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Soft-delete marker: absent (None) means active. Set on delete/depletion so
+    # history and the ledger are preserved; filtered out of live reads.
+    deleted_at: Optional[str] = None
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(
@@ -204,8 +216,10 @@ class Task:
     answer_mode: str = "checkbox"  # checkbox | yesno (decision task)
     last_decision: Optional[str] = None  # yes | no | None (decision answer)
     trigger: Optional[dict] = None  # dependency on another task's decision
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Soft-delete marker: absent (None) = active. Filtered out of live reads.
+    deleted_at: Optional[str] = None
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(
@@ -296,8 +310,8 @@ class Report:
     trigger: Dict[str, Any] = field(default_factory=dict)
     next_run: Optional[str] = None
     last_run_at: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(
@@ -363,7 +377,7 @@ class Message:
     sections: List[Dict[str, Any]] = field(default_factory=list)
     report_id: Optional[str] = None
     read_at: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(
@@ -421,8 +435,8 @@ class SlackConnection:
     bot_user_id: str = ""
     scopes: str = ""
     authed_user_id: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
 
     @classmethod
     def create(
@@ -494,32 +508,84 @@ class SlackConnection:
         }
 
 
+# Ledger event types. Items distinguish genuine usage (consumed) from a data
+# removal (removed/deleted) and from a plain edit (adjusted).
+EVENT_ITEM_CREATED = "item_created"
+EVENT_ITEM_ADJUSTED = "item_adjusted"
+EVENT_ITEM_CONSUMED = "item_consumed"
+EVENT_ITEM_REMOVED = "item_removed"
+EVENT_TASK_COMPLETED = "task_completed"
+EVENT_TASK_UNCOMPLETED = "task_uncompleted"
+
+ENTITY_ITEM = "item"
+ENTITY_TASK = "task"
+
+
 @dataclass
-class ItemTag:
-    """Item-tag relationship model."""
+class LedgerEvent:
+    """An append-only domain event (history / analytics source of truth).
+
+    Immutable: rows are only ever inserted, never updated or deleted. Live
+    operational reads NEVER consult the ledger — it exists for history and the
+    S3/Athena analytics tier only (CQRS-lite, not event sourcing).
+
+    Keys:
+    - ``event_sk`` = ``"{occurred_at}#{event_id}"`` — the table range key, giving
+      a time-ordered per-user stream.
+    - ``entity_sk`` = ``"{entity_type}#{entity_id}#{occurred_at}"`` — the
+      EntityIndex range key, for a single item's / task's history.
+
+    ``payload`` carries event-specific data plus denormalized snapshot fields for
+    analytics (e.g. item name, location_id, category_id, a dimension delta, or a
+    task decision), so Athena queries need not join back to the live tables.
+    """
     user_id: str
-    tag_name: str
-    item_id: str
-    tag_item_composite: str  # Composite key: "tag:<tag>#item:<item_id>"
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    entity_type: str  # ENTITY_ITEM | ENTITY_TASK
+    entity_id: str
+    event_type: str
+    event_id: str
+    occurred_at: str
+    payload: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def create(cls, user_id: str, tag_name: str, item_id: str) -> "ItemTag":
-        """Create a new ItemTag instance."""
-        composite = f"tag:{tag_name}#item:{item_id}"
+    def create(
+        cls,
+        user_id: str,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+        occurred_at: Optional[str] = None,
+    ) -> "LedgerEvent":
+        """Build a new event (fresh id + timestamp unless ``occurred_at`` given)."""
         return cls(
             user_id=user_id,
-            tag_name=tag_name,
-            item_id=item_id,
-            tag_item_composite=composite
+            entity_type=entity_type,
+            entity_id=entity_id,
+            event_type=event_type,
+            event_id=str(uuid.uuid4()),
+            occurred_at=occurred_at or now_iso(),
+            payload=payload or {},
         )
 
+    @property
+    def event_sk(self) -> str:
+        return f"{self.occurred_at}#{self.event_id}"
+
+    @property
+    def entity_sk(self) -> str:
+        return f"{self.entity_type}#{self.entity_id}#{self.occurred_at}"
+
     def to_dict(self) -> dict:
-        """Convert to dictionary."""
+        """Convert to the DynamoDB storage shape (includes the index keys)."""
         return {
             "user_id": self.user_id,
-            "tag_name": self.tag_name,
-            "item_id": self.item_id,
-            "tag_item_composite": self.tag_item_composite,
-            "created_at": self.created_at
+            "event_sk": self.event_sk,
+            "entity_sk": self.entity_sk,
+            "event_id": self.event_id,
+            "occurred_at": self.occurred_at,
+            "entity_type": self.entity_type,
+            "entity_id": self.entity_id,
+            "event_type": self.event_type,
+            "payload": self.payload,
         }

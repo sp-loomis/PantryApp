@@ -113,45 +113,10 @@ module "locations_table" {
   tags         = var.env_tags
 }
 
-# DynamoDB table for item-tag relationships (user-scoped)
-module "item_tags_table" {
-  source = "../dynamodb_table"
-
-  table_name  = "${var.name_prefix}-table-item-tags"
-  environment = var.environment
-  hash_key    = "user_id"
-  range_key   = "tag_item_composite"
-
-  attributes = [
-    {
-      name = "user_id"
-      type = "S"
-    },
-    {
-      name = "tag_item_composite"
-      type = "S"
-    },
-    {
-      name = "tag_name"
-      type = "S"
-    }
-  ]
-
-  # TagIndex supports reverse lookups (items-by-tag) and listing all of a
-  # user's tags. Tags are also denormalized onto each item record, so no
-  # per-item index is needed to read an item's tags.
-  global_secondary_indexes = [
-    {
-      name            = "TagIndex"
-      hash_key        = "user_id"
-      range_key       = "tag_name"
-      projection_type = "ALL"
-    }
-  ]
-
-  billing_mode = var.dynamodb_billing_mode
-  tags         = var.env_tags
-}
+# NOTE: the former item-tags reverse-index table was removed in the data-model
+# redesign — tags are the denormalized array on each item, and items-by-tag /
+# list-tags derive from the user's partition. On apply, Terraform destroys the
+# old `${var.name_prefix}-table-item-tags` table (its data was redundant).
 
 # DynamoDB table for tasks/chores (user-scoped)
 module "tasks_table" {
@@ -241,6 +206,49 @@ module "messages_table" {
       projection_type = "ALL"
     }
   ]
+
+  billing_mode = var.dynamodb_billing_mode
+  tags         = var.env_tags
+}
+
+# Append-only domain-event ledger (history / analytics source of truth).
+# PK=user_id, SK=event_sk ("{occurred_at}#{event_id}"); EntityIndex (SK=entity_sk)
+# serves per-item/task history. A DynamoDB stream (NEW_IMAGE) feeds the analytics
+# consumer (see analytics.tf). Rows are only ever inserted.
+module "ledger_table" {
+  source = "../dynamodb_table"
+
+  table_name  = "${var.name_prefix}-table-ledger"
+  environment = var.environment
+  hash_key    = "user_id"
+  range_key   = "event_sk"
+
+  attributes = [
+    {
+      name = "user_id"
+      type = "S"
+    },
+    {
+      name = "event_sk"
+      type = "S"
+    },
+    {
+      name = "entity_sk"
+      type = "S"
+    }
+  ]
+
+  global_secondary_indexes = [
+    {
+      name            = "EntityIndex"
+      hash_key        = "user_id"
+      range_key       = "entity_sk"
+      projection_type = "ALL"
+    }
+  ]
+
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
 
   billing_mode = var.dynamodb_billing_mode
   tags         = var.env_tags
@@ -356,13 +364,13 @@ data "aws_iam_policy_document" "lambda_dynamodb_policy" {
       "${module.items_table.table_arn}/index/*",
       module.locations_table.table_arn,
       module.categories_table.table_arn,
-      module.item_tags_table.table_arn,
-      "${module.item_tags_table.table_arn}/index/*",
       module.tasks_table.table_arn,
       "${module.tasks_table.table_arn}/index/*",
       module.reports_table.table_arn,
       module.messages_table.table_arn,
       "${module.messages_table.table_arn}/index/*",
+      module.ledger_table.table_arn,
+      "${module.ledger_table.table_arn}/index/*",
       module.slack_connections_table.table_arn,
       module.slack_nonces_table.table_arn
     ]
@@ -436,8 +444,8 @@ module "api_lambda" {
     ITEMS_TABLE_NAME      = module.items_table.table_name
     LOCATIONS_TABLE_NAME  = module.locations_table.table_name
     CATEGORIES_TABLE_NAME = module.categories_table.table_name
-    ITEM_TAGS_TABLE_NAME  = module.item_tags_table.table_name
     TASKS_TABLE_NAME     = module.tasks_table.table_name
+    LEDGER_TABLE_NAME    = module.ledger_table.table_name
     REPORTS_TABLE_NAME   = module.reports_table.table_name
     MESSAGES_TABLE_NAME  = module.messages_table.table_name
     COGNITO_USER_POOL_ID = module.cognito_pool.user_pool_id

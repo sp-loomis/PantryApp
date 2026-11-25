@@ -41,7 +41,9 @@ def test_create_item_full_payload(api):
     assert isinstance(item["dimensions"][0]["value"], float)
     assert item["dimensions"][0]["value"] == 12.0
     assert item["tags"] == ["dairy", "fresh"]
-    assert item["use_by_date"] == "2030-01-01T00:00:00+00:00"
+    # use_by_date is normalized to date-only on write (fixes the UseByDateIndex
+    # lexicographic compare).
+    assert item["use_by_date"] == "2030-01-01"
     assert item["notes"] == "two cartons"
 
 
@@ -305,6 +307,55 @@ def test_delete_item_not_found_returns_404(api):
 
     assert resp.status_code == 404
     assert resp.body["error"] == "Item not found"
+
+
+# ---------------------------------------------------------------------------
+# POST /items/<id>/consume
+# ---------------------------------------------------------------------------
+
+def test_consume_partial(api):
+    created = _make_item(
+        api, dimensions=[{"dimension_type": "weight", "value": 2, "unit": "kg"}]
+    ).body["item"]
+
+    resp = api.call(
+        "POST", f"/items/{created['item_id']}/consume",
+        body={"amount": {"dimension_type": "weight", "value": 500, "unit": "g"}},
+    )
+
+    assert resp.status_code == 200
+    assert resp.body["item"]["dimensions"][0]["value"] == 1.5
+    assert "depleted" not in resp.body
+    # Item still present after a partial consume.
+    assert api.call("GET", f"/items/{created['item_id']}").status_code == 200
+
+
+def test_consume_all_depletes(api):
+    created = _make_item(api).body["item"]
+
+    resp = api.call("POST", f"/items/{created['item_id']}/consume", body={})
+
+    assert resp.status_code == 200
+    assert resp.body["depleted"] is True
+    # Depleted item is soft-deleted (reads as 404).
+    assert api.call("GET", f"/items/{created['item_id']}").status_code == 404
+
+
+def test_consume_not_found_returns_404(api):
+    resp = api.call("POST", "/items/nope/consume", body={})
+    assert resp.status_code == 404
+
+
+def test_consume_wrong_dimension_returns_400(api):
+    created = _make_item(
+        api, dimensions=[{"dimension_type": "volume", "value": 1, "unit": "l"}]
+    ).body["item"]
+
+    resp = api.call(
+        "POST", f"/items/{created['item_id']}/consume",
+        body={"amount": {"dimension_type": "weight", "value": 1, "unit": "kg"}},
+    )
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,6 @@ TEST_PREFIX = "test-"
 ITEMS_TABLE = schema.TABLES["items"].name(TEST_PREFIX)
 LOCATIONS_TABLE = schema.TABLES["locations"].name(TEST_PREFIX)
 CATEGORIES_TABLE = schema.TABLES["categories"].name(TEST_PREFIX)
-ITEM_TAGS_TABLE = schema.TABLES["item_tags"].name(TEST_PREFIX)
 TASKS_TABLE = schema.TABLES["tasks"].name(TEST_PREFIX)
 REPORTS_TABLE = schema.TABLES["reports"].name(TEST_PREFIX)
 MESSAGES_TABLE = schema.TABLES["messages"].name(TEST_PREFIX)
@@ -148,22 +147,34 @@ def category_service(dynamodb_tables):
     )
 
 
+LEDGER_TABLE = schema.TABLES["ledger"].name(TEST_PREFIX)
+
+
+@pytest.fixture
+def ledger_service(dynamodb_tables):
+    """LedgerService backed by mocked DynamoDB (service-layer tests)."""
+    from services import LedgerService
+
+    yield LedgerService(dynamodb_tables.Table(LEDGER_TABLE))
+
+
 @pytest.fixture
 def services(dynamodb_tables):
     """ItemService + LocationService backed by mocked DynamoDB (service-layer tests).
 
-    ItemService is wired with a CategoryService so category assignment/validation
-    is exercised in service-layer tests.
+    ItemService is wired with a CategoryService (category assignment/validation)
+    and a LedgerService (so ledger emits are exercised in service-layer tests).
     """
-    from services import ItemService, LocationService, CategoryService
+    from services import ItemService, LocationService, CategoryService, LedgerService
 
     categories = CategoryService(
         dynamodb_tables.Table(CATEGORIES_TABLE), dynamodb_tables.Table(ITEMS_TABLE)
     )
+    ledger = LedgerService(dynamodb_tables.Table(LEDGER_TABLE))
     item_service = ItemService(
         dynamodb_tables.Table(ITEMS_TABLE),
-        dynamodb_tables.Table(ITEM_TAGS_TABLE),
         categories,
+        ledger_service=ledger,
     )
     location_service = LocationService(dynamodb_tables.Table(LOCATIONS_TABLE))
     yield item_service, location_service, dynamodb_tables
@@ -172,9 +183,12 @@ def services(dynamodb_tables):
 @pytest.fixture
 def task_service(dynamodb_tables):
     """TaskService backed by mocked DynamoDB (service-layer tests)."""
-    from services import TaskService
+    from services import TaskService, LedgerService
 
-    yield TaskService(dynamodb_tables.Table(TASKS_TABLE))
+    yield TaskService(
+        dynamodb_tables.Table(TASKS_TABLE),
+        ledger_service=LedgerService(dynamodb_tables.Table(LEDGER_TABLE)),
+    )
 
 
 @pytest.fixture
@@ -210,11 +224,7 @@ def report_generator(dynamodb_tables):
     reports = ReportService(dynamodb_tables.Table(REPORTS_TABLE), categories)
     messages = MessageService(dynamodb_tables.Table(MESSAGES_TABLE))
     tasks = TaskService(dynamodb_tables.Table(TASKS_TABLE))
-    items = ItemService(
-        dynamodb_tables.Table(ITEMS_TABLE),
-        dynamodb_tables.Table(ITEM_TAGS_TABLE),
-        categories,
-    )
+    items = ItemService(dynamodb_tables.Table(ITEMS_TABLE), categories)
     yield ReportGenerator(reports, messages, tasks, items, category_service=categories)
 
 

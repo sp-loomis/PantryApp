@@ -7,38 +7,34 @@ Line numbers reflect the state at discovery and may drift.
 
 ## Deferred (out of scope for the backend-hardening pass)
 
-- **Reverse tag-index writes are non-atomic with no rollback** — in `update_item`, the
-  reverse-index rows are mutated *before* the item write; if the item write throws, the
-  index and the item's denormalized `tags` diverge permanently. `TagService`'s per-tag
-  `put_item`/`delete_item` loops and `delete_item`'s "remove index rows then delete item"
-  sequence have the same partial-failure exposure. Fixing properly needs DynamoDB
-  `TransactWriteItems` or a reconciliation path, and isn't meaningfully testable under
-  `moto`. **Deferred.**
-- **No pagination anywhere** — every `query`/index read in `services.py`
-  (`list_all_items`, `list_locations`, `get_items_by_location`, `list_all_tags`, …)
-  ignores `LastEvaluatedKey`, so results silently truncate at DynamoDB's 1 MB page. Name
-  search and aggregate, which load a whole partition in memory, operate on partial data
-  for large inventories. Cross-cutting; **deferred** to a dedicated effort.
-- **Raw exception strings leak in `5xx` bodies** — every route's `except Exception`
-  returns `{"error": str(e)}, 500`, exposing internal messages to clients. Security /
-  hardening pass; **deferred.**
-- **`/items/expiring` compares dates as strings server-side** — the `UseByDateIndex`
-  query uses DynamoDB's `.lte(cutoff)`, a lexicographic string comparison. Date-only vs.
-  full-timestamp `use_by_date` values sort by prefix. The `/search` in-memory date filter
-  was fixed to parse datetimes (see Resolved), but a robust fix here requires normalizing
-  the stored `use_by_date` format on write. **Deferred.**
+- (All of the originally-deferred items below were resolved in the data-model
+  redesign — see **Resolved (data-model redesign)**.)
 
 ## Open product decisions
 
 - (none currently — the expiring-window scope and multi-tag OR/AND questions were
   resolved in this pass; see Resolved.)
 
-## CLI (frontend — out of scope for the backend pass)
+## CLI (retired)
 
-- **Cannot clear a text field with an empty string** — `item update --notes ""` and
-  `location update --description ""` are gated by `if <opt>:` truthiness, so an empty
-  string is silently dropped and the field can't be cleared. Use `is not None` sentinels
-  (as the numeric options already do). To be addressed with the frontend work.
+- The `frontend/cli` tool was removed in the data-model redesign (the React SPA is the
+  sole client), so its backlog items (e.g. the empty-string field-clear bug) no longer
+  apply.
+
+## Resolved (data-model redesign)
+
+- **Reverse tag-index removed** — the `item_tags` table + `TagService` are gone; tags are
+  the denormalized array on each item, and items-by-tag / list-tags derive from the
+  partition. This eliminates the non-atomic dual-write hazard entirely (no index to
+  diverge). (Terraform drops the prod table in the analytics/infra phase.)
+- **Pagination added** — `services._paginate` follows `LastEvaluatedKey`; every list/query
+  path uses it, so large partitions no longer truncate at 1 MB.
+- **5xx bodies no longer leak internals** — routes return a generic
+  `{"error": "Internal server error"}` via `app._server_error()`; the real exception is
+  logged, not returned.
+- **`use_by_date` normalized to date-only on write** — `create`/`update` store
+  `YYYY-MM-DD` and `/items/expiring` compares a date-only cutoff, so the lexicographic
+  `UseByDateIndex` range is correct.
 
 ## Resolved (on `feat/fuzzy-name-search`)
 

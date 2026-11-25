@@ -17,12 +17,12 @@ LOCAL_PREFIX = "pantry-local-"
 ITEMS_TABLE = schema.TABLES["items"].name(LOCAL_PREFIX)
 LOCATIONS_TABLE = schema.TABLES["locations"].name(LOCAL_PREFIX)
 CATEGORIES_TABLE = schema.TABLES["categories"].name(LOCAL_PREFIX)
-ITEM_TAGS_TABLE = schema.TABLES["item_tags"].name(LOCAL_PREFIX)
 TASKS_TABLE = schema.TABLES["tasks"].name(LOCAL_PREFIX)
 REPORTS_TABLE = schema.TABLES["reports"].name(LOCAL_PREFIX)
 MESSAGES_TABLE = schema.TABLES["messages"].name(LOCAL_PREFIX)
 SLACK_CONNECTIONS_TABLE = schema.TABLES["slack_connections"].name(LOCAL_PREFIX)
 SLACK_NONCES_TABLE = schema.TABLES["slack_nonces"].name(LOCAL_PREFIX)
+LEDGER_TABLE = schema.TABLES["ledger"].name(LOCAL_PREFIX)
 
 # ``*_TABLE_NAME`` env map, exported into the environment before ``app`` is
 # imported so the Lambda code binds to the local tables.

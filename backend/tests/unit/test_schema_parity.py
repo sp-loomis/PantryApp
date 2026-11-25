@@ -76,20 +76,6 @@ EXPECTED = {
         "ttl_attribute": None,
         "stream": None,
     },
-    "item_tags": {
-        "suffix": "item-tags",
-        "env": "ITEM_TAGS_TABLE_NAME",
-        "hash_key": "user_id",
-        "range_key": "tag_item_composite",
-        "attributes": [
-            ("tag_item_composite", "S"),
-            ("tag_name", "S"),
-            ("user_id", "S"),
-        ],
-        "gsis": [("TagIndex", ("user_id", "tag_name"))],
-        "ttl_attribute": None,
-        "stream": None,
-    },
     "tasks": {
         "suffix": "tasks",
         "env": "TASKS_TABLE_NAME",
@@ -144,6 +130,20 @@ EXPECTED = {
         "ttl_attribute": "expires_at",
         "stream": None,
     },
+    "ledger": {
+        "suffix": "ledger",
+        "env": "LEDGER_TABLE_NAME",
+        "hash_key": "user_id",
+        "range_key": "event_sk",
+        "attributes": [
+            ("entity_sk", "S"),
+            ("event_sk", "S"),
+            ("user_id", "S"),
+        ],
+        "gsis": [("EntityIndex", ("user_id", "entity_sk"))],
+        "ttl_attribute": None,
+        "stream": "NEW_IMAGE",
+    },
 }
 
 
@@ -155,7 +155,7 @@ def test_schema_matches_snapshot():
 def test_table_names_apply_prefix():
     names = schema.table_names("test-")
     assert names["ITEMS_TABLE_NAME"] == "test-items"
-    assert names["ITEM_TAGS_TABLE_NAME"] == "test-item-tags"
+    assert names["LEDGER_TABLE_NAME"] == "test-ledger"
     assert names["SLACK_NONCES_TABLE_NAME"] == "test-slack-nonces"
     # One env var per table, no collisions.
     assert len(names) == len(schema.TABLES)

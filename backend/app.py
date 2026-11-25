@@ -16,8 +16,8 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig, Response
 
 from services import (
-    ItemService, LocationService, CategoryService, TagService, TaskService,
-    ReportService, MessageService, ReportGenerator, SlackService,
+    ItemService, LocationService, CategoryService, TaskService,
+    ReportService, MessageService, ReportGenerator, SlackService, LedgerService,
 )
 from report_conditions import evaluate_trigger
 from dimensions import DimensionType, WeightUnit, VolumeUnit
@@ -45,8 +45,8 @@ dynamodb = boto3.resource('dynamodb')
 ITEMS_TABLE = os.environ.get('ITEMS_TABLE_NAME')
 LOCATIONS_TABLE = os.environ.get('LOCATIONS_TABLE_NAME')
 CATEGORIES_TABLE = os.environ.get('CATEGORIES_TABLE_NAME')
-ITEM_TAGS_TABLE = os.environ.get('ITEM_TAGS_TABLE_NAME')
 TASKS_TABLE = os.environ.get('TASKS_TABLE_NAME')
+LEDGER_TABLE = os.environ.get('LEDGER_TABLE_NAME')
 REPORTS_TABLE = os.environ.get('REPORTS_TABLE_NAME')
 MESSAGES_TABLE = os.environ.get('MESSAGES_TABLE_NAME')
 SLACK_CONNECTIONS_TABLE = os.environ.get('SLACK_CONNECTIONS_TABLE_NAME')
@@ -97,11 +97,13 @@ category_service = CategoryService(
     dynamodb.Table(CATEGORIES_TABLE) if CATEGORIES_TABLE else None,
     dynamodb.Table(ITEMS_TABLE),
 )
+# Append-only domain-event ledger (history / analytics). Optional: when the table
+# isn't configured, services run without emitting (emits are best-effort anyway).
+ledger_service = LedgerService(dynamodb.Table(LEDGER_TABLE)) if LEDGER_TABLE else None
 item_service = ItemService(
-    dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE), category_service
+    dynamodb.Table(ITEMS_TABLE), category_service, ledger_service=ledger_service
 )
-tag_service = TagService(dynamodb.Table(ITEM_TAGS_TABLE))
-task_service = TaskService(dynamodb.Table(TASKS_TABLE))
+task_service = TaskService(dynamodb.Table(TASKS_TABLE), ledger_service=ledger_service)
 report_service = ReportService(dynamodb.Table(REPORTS_TABLE), category_service)
 message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
 
@@ -756,10 +758,45 @@ def update_item(item_id: str):
         return _server_error()
 
 
+@app.post("/items/<item_id>/consume")
+@tracer.capture_method
+def consume_item(item_id: str):
+    """Record genuine usage of an item (distinct from deletion).
+
+    Body: an optional ``amount`` dimension ``{dimension_type, value, unit}`` to
+    deduct; omit it (or send ``{}``) to consume the whole item. Decrements the
+    matching dimension and appends an ``item_consumed`` event; consuming the last
+    of it depletes (soft-deletes) the item.
+    """
+    try:
+        user_id = _current_user_id()
+        data = app.current_event.json_body or {}
+        amount = data.get("amount")
+        result = item_service.consume_item(user_id, item_id, amount)
+        if result is None:
+            return {"error": "Item not found"}, 404
+        metrics.add_metric(name="ItemConsumed", unit="Count", value=1)
+        if result.get("depleted"):
+            return {"item": result, "depleted": True}
+        return {"item": result}
+    except AuthenticationError as e:
+        logger.warning(f"Unauthenticated request: {str(e)}")
+        return {"error": str(e)}, 401
+    except PermissionError as e:
+        logger.warning(f"Permission denied: {str(e)}")
+        return {"error": str(e)}, 403
+    except ValueError as e:
+        logger.warning(f"Validation error consuming item: {str(e)}")
+        return {"error": str(e)}, 400
+    except Exception as e:
+        logger.exception("Error consuming item")
+        return _server_error()
+
+
 @app.delete("/items/<item_id>")
 @tracer.capture_method
 def delete_item(item_id: str):
-    """Delete an inventory item (mark as used)."""
+    """Soft-delete an inventory item (data removal, not a consumption)."""
     try:
         user_id = _current_user_id()
         success = item_service.delete_item(user_id, item_id)

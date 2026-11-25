@@ -46,6 +46,9 @@ resource "aws_dynamodb_table" "table" {
     enabled = var.encryption_enabled
   }
 
+  stream_enabled   = var.stream_enabled
+  stream_view_type = var.stream_enabled ? var.stream_view_type : null
+
   tags = merge(
     {
       Name        = var.table_name

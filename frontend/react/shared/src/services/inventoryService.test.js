@@ -12,8 +12,14 @@ vi.mock('./apiClient.js', () => ({
   },
 }));
 
-const { createItem, updateItemsBulk, deleteItemsBulk, addItemsTagsBulk, searchItems } =
-  await import('./inventoryService.js');
+const {
+  createItem,
+  updateItemsBulk,
+  deleteItemsBulk,
+  addItemsTagsBulk,
+  searchItems,
+  consumeItem,
+} = await import('./inventoryService.js');
 
 describe('createItem', () => {
   beforeEach(() => {
@@ -129,5 +135,30 @@ describe('addItemsTagsBulk', () => {
       item_ids: ['a', 'b'],
       tags: ['fresh', 'snack'],
     });
+  });
+});
+
+describe('consumeItem', () => {
+  beforeEach(() => {
+    post.mockReset();
+  });
+
+  it('posts an amount when given one', async () => {
+    post.mockResolvedValue({ item: { item_id: 'a', dimensions: [] } });
+
+    const amount = { dimension_type: 'weight', value: 500, unit: 'g' };
+    const result = await consumeItem('a', amount);
+
+    expect(post).toHaveBeenCalledWith('/items/a/consume', { amount });
+    expect(result.item.item_id).toBe('a');
+  });
+
+  it('posts an empty body to consume the whole item', async () => {
+    post.mockResolvedValue({ item: { item_id: 'a', depleted: true }, depleted: true });
+
+    const result = await consumeItem('a');
+
+    expect(post).toHaveBeenCalledWith('/items/a/consume', {});
+    expect(result.depleted).toBe(true);
   });
 });

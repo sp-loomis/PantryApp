@@ -89,8 +89,11 @@ def test_create_item_copies_denormalizes_tags_for_each_copy(services):
         copies=2,
     )
 
-    # A reverse-index tag row exists for each new item id.
-    tagged_ids = set(item_service.tag_service.get_items_by_tag(USER, "dairy"))
+    # Each copy carries the denormalized (lowercased) tag, and the derived
+    # items-by-tag lookup finds every copy.
+    for item in created:
+        assert item["tags"] == ["dairy"]
+    tagged_ids = {i["item_id"] for i in item_service.get_items_by_tag(USER, "dairy")}
     for item in created:
         assert item["item_id"] in tagged_ids
 

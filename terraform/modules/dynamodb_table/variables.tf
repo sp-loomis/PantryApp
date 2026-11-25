@@ -69,6 +69,18 @@ variable "encryption_enabled" {
   default     = true
 }
 
+variable "stream_enabled" {
+  description = "Enable a DynamoDB stream (for append-only tables feeding analytics)"
+  type        = bool
+  default     = false
+}
+
+variable "stream_view_type" {
+  description = "Stream view type when stream_enabled (KEYS_ONLY | NEW_IMAGE | OLD_IMAGE | NEW_AND_OLD_IMAGES)"
+  type        = string
+  default     = "NEW_IMAGE"
+}
+
 variable "tags" {
   description = "Additional tags for the table"
   type        = map(string)

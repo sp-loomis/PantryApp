@@ -13,9 +13,24 @@ output "categories_table_name" {
   value       = module.categories_table.table_name
 }
 
-output "item_tags_table_name" {
-  description = "Name of the item tags DynamoDB table"
-  value       = module.item_tags_table.table_name
+output "ledger_table_name" {
+  description = "Name of the append-only ledger DynamoDB table"
+  value       = module.ledger_table.table_name
+}
+
+output "analytics_bucket_name" {
+  description = "S3 bucket holding ledger events as partitioned JSONL for Athena"
+  value       = aws_s3_bucket.analytics.bucket
+}
+
+output "athena_workgroup" {
+  description = "Athena workgroup for querying the ledger history"
+  value       = aws_athena_workgroup.analytics.name
+}
+
+output "glue_database_name" {
+  description = "Glue catalog database for the ledger events table"
+  value       = aws_glue_catalog_database.analytics.name
 }
 
 output "lambda_function_name" {

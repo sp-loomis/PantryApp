@@ -19,7 +19,13 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 
-from models import Item, Location, Category, ItemTag, Task, Report, Message, SlackConnection
+from models import (
+    Item, Location, Category, Task, Report, Message, SlackConnection,
+    LedgerEvent, now_iso,
+    ENTITY_ITEM, ENTITY_TASK,
+    EVENT_ITEM_CREATED, EVENT_ITEM_ADJUSTED, EVENT_ITEM_CONSUMED,
+    EVENT_ITEM_REMOVED, EVENT_TASK_COMPLETED, EVENT_TASK_UNCOMPLETED,
+)
 from dimensions import (
     Dimension, DimensionType, validate_dimension, validate_category_measure,
     aggregate_dimensions, aggregate_by_category,
@@ -48,8 +54,21 @@ BATCH_MAX = 100
 
 
 def _now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    """Return the current UTC time as an ISO-8601 string (shared mint)."""
+    return now_iso()
+
+
+def _normalize_use_by_date(value: Optional[str]) -> Optional[str]:
+    """Normalize a use-by date to date-only ``YYYY-MM-DD``.
+
+    ``use_by_date`` backs the lexicographic ``UseByDateIndex``; storing a mix of
+    date-only and full-timestamp values makes the string compare prefix-sensitive
+    and wrong. Collapsing every write to the date component fixes it. Returns None
+    for a falsy input; raises ValueError for an unparseable date.
+    """
+    if not value:
+        return None
+    return _parse_iso(value).date().isoformat()
 
 
 def _validate_delivery(delivery: Any) -> None:
@@ -138,6 +157,88 @@ def _paginate(operation, **kwargs) -> List[Dict[str, Any]]:
         response = operation(**kwargs, ExclusiveStartKey=response["LastEvaluatedKey"])
         items.extend(response.get("Items", []))
     return items
+
+
+def _active(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop soft-deleted rows (those carrying a ``deleted_at``) from a result set.
+
+    Soft-deleted items/tasks keep their GSI attributes, so index queries still
+    return them; live reads filter them here. History/analytics read the ledger,
+    not these paths, so nothing is lost.
+    """
+    return [r for r in rows if not r.get("deleted_at")]
+
+
+class LedgerService:
+    """Append-only domain-event ledger (history / analytics source of truth).
+
+    Rows are only ever inserted. Live operational logic never reads this; it
+    exists for per-entity history and the S3/Athena analytics tier (its stream).
+    """
+
+    ENTITY_INDEX = "EntityIndex"
+
+    def __init__(self, table):
+        self.table = table
+
+    def append(self, event: LedgerEvent) -> None:
+        """Persist one event (raises on failure — callers emit best-effort)."""
+        item = event.to_dict()
+        # Dimension deltas etc. arrive as floats; DynamoDB rejects float.
+        item["payload"] = _floats_to_decimal(item.get("payload") or {})
+        self.table.put_item(Item=item)
+        logger.info(
+            f"Ledger: {event.event_type} {event.entity_type}:{event.entity_id} "
+            f"for user: {event.user_id}"
+        )
+
+    def record(
+        self,
+        user_id: str,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+        occurred_at: Optional[str] = None,
+    ) -> LedgerEvent:
+        """Build and append an event; returns it."""
+        event = LedgerEvent.create(
+            user_id, entity_type, entity_id, event_type, payload, occurred_at
+        )
+        self.append(event)
+        return event
+
+    def list_entity_history(
+        self, user_id: str, entity_type: str, entity_id: str
+    ) -> List[Dict[str, Any]]:
+        """Return one entity's events, oldest-first (via the EntityIndex)."""
+        prefix = f"{entity_type}#{entity_id}#"
+        rows = _paginate(
+            self.table.query,
+            IndexName=self.ENTITY_INDEX,
+            KeyConditionExpression=Key("user_id").eq(user_id)
+            & Key("entity_sk").begins_with(prefix),
+        )
+        for row in rows:
+            row["payload"] = _decimals_to_float(row.get("payload") or {})
+        return rows
+
+
+def _emit_event(ledger: Optional["LedgerService"], event: LedgerEvent) -> None:
+    """Best-effort ledger append: a failure must never fail the primary write.
+
+    A None ledger (service wired without one, e.g. some tests) is a no-op.
+    """
+    if ledger is None:
+        return
+    try:
+        ledger.append(event)
+    except Exception:
+        logger.exception(
+            "Ledger emit failed (non-fatal): %s/%s",
+            event.entity_type,
+            event.event_type,
+        )
 
 
 class LocationService:
@@ -349,57 +450,23 @@ class CategoryService:
             )
 
 
-class TagService:
-    """Service for managing the item-tag reverse index (items-by-tag lookups)."""
-
-    def __init__(self, table):
-        self.table = table
-
-    def add_tags_to_item(self, user_id: str, item_id: str, tags: List[str]) -> None:
-        """Add reverse-index rows for tags on an item for a specific user."""
-        for tag in tags:
-            item_tag = ItemTag.create(user_id=user_id, tag_name=tag.lower(), item_id=item_id)
-            self.table.put_item(Item=item_tag.to_dict())
-
-        logger.info(f"Added {len(tags)} tags to item: {item_id} for user: {user_id}")
-
-    def remove_tags_from_item(self, user_id: str, item_id: str, tags: List[str]) -> None:
-        """Remove reverse-index rows for tags on an item for a specific user."""
-        for tag in tags:
-            composite_key = f"tag:{tag.lower()}#item:{item_id}"
-            self.table.delete_item(
-                Key={"user_id": user_id, "tag_item_composite": composite_key}
-            )
-
-        logger.info(f"Removed {len(tags)} tags from item: {item_id} for user: {user_id}")
-
-    def get_items_by_tag(self, user_id: str, tag: str) -> List[str]:
-        """Get all item IDs with a specific tag for a specific user."""
-        response = self.table.query(
-            IndexName="TagIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id) & Key("tag_name").eq(tag.lower())
-        )
-        return [item["item_id"] for item in response.get("Items", [])]
-
-    def list_all_tags(self, user_id: str) -> List[str]:
-        """List all distinct tags across a user's inventory."""
-        response = self.table.query(
-            IndexName="TagIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        tags = {item["tag_name"] for item in response.get("Items", [])}
-        return sorted(tags)
-
-
 class ItemService:
-    """Service for managing inventory items."""
+    """Service for managing inventory items.
 
-    def __init__(self, items_table, tags_table, category_service=None):
+    Tags are modeled as the denormalized ``tags`` array on each item (lowercased,
+    deduped). There is no separate reverse-index table: items-by-tag and the
+    distinct-tag list are derived from the user's partition, consistent with how
+    search/aggregate already read. This removes the old dual-write consistency
+    hazard entirely.
+    """
+
+    def __init__(self, items_table, category_service=None, ledger_service=None):
         self.items_table = items_table
-        self.tag_service = TagService(tags_table)
         # Optional CategoryService; enables category assignment + measure-type
         # enforcement on create/update. None disables category validation.
         self.category_service = category_service
+        # Optional append-only ledger; emits are best-effort (see _emit_event).
+        self.ledger_service = ledger_service
 
     @staticmethod
     def _deserialize_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -422,30 +489,6 @@ class ItemService:
         item.setdefault("use_by_date", None)
         return item
 
-    def _batch_get_items(self, user_id: str, item_ids: List[str]) -> List[Dict[str, Any]]:
-        """Fetch multiple items by ID in as few round-trips as possible."""
-        items: List[Dict[str, Any]] = []
-        client = self.items_table.meta.client
-        table_name = self.items_table.table_name
-
-        # batch_get_item accepts at most 100 keys per request.
-        for start in range(0, len(item_ids), 100):
-            chunk = item_ids[start:start + 100]
-            request_keys = [{"user_id": user_id, "item_id": iid} for iid in chunk]
-            response = client.batch_get_item(
-                RequestItems={table_name: {"Keys": request_keys}}
-            )
-            items.extend(response.get("Responses", {}).get(table_name, []))
-
-            # Retry any unprocessed keys once (rare, but keeps results complete).
-            unprocessed = response.get("UnprocessedKeys", {})
-            while unprocessed:
-                response = client.batch_get_item(RequestItems=unprocessed)
-                items.extend(response.get("Responses", {}).get(table_name, []))
-                unprocessed = response.get("UnprocessedKeys", {})
-
-        return [self._deserialize_item(item) for item in items]
-
     def _persist_new_item(self, item: "Item", tags: List[str]) -> Dict[str, Any]:
         """Write one already-built Item (plus its tag reverse-index rows) to storage.
 
@@ -463,11 +506,21 @@ class ItemService:
             storage_dict.pop("use_by_date", None)
         self.items_table.put_item(Item=storage_dict)
 
-        if tags:
-            self.tag_service.add_tags_to_item(item.user_id, item.item_id, tags)
-
         logger.info(f"Created item: {item.item_id} for user: {item.user_id}")
-        return self._deserialize_item(item.to_dict())
+        result = self._deserialize_item(item.to_dict())
+        _emit_event(
+            self.ledger_service,
+            LedgerEvent.create(
+                item.user_id, ENTITY_ITEM, item.item_id, EVENT_ITEM_CREATED,
+                payload={
+                    "name": result.get("name"),
+                    "location_id": result.get("location_id"),
+                    "category_id": result.get("category_id"),
+                    "dimensions": result.get("dimensions", []),
+                },
+            ),
+        )
+        return result
 
     def create_item(
         self,
@@ -491,6 +544,8 @@ class ItemService:
         copies = self._validate_copies(copies)
         dimensions = dimensions or []
         tags = [t.lower() for t in (tags or [])]
+        # Store date-only (fixes the lexicographic UseByDateIndex compare).
+        use_by_date = _normalize_use_by_date(use_by_date)
 
         self._validate_dimensions(dimensions)
         self._validate_category(user_id, category_id, dimensions)
@@ -517,39 +572,41 @@ class ItemService:
             Key={"user_id": user_id, "item_id": item_id}
         )
         item = response.get("Item")
-        if not item:
+        if not item or item.get("deleted_at"):
+            # A soft-deleted item reads as absent (→ 404).
             return None
         return self._deserialize_item(item)
 
     def list_all_items(self, user_id: str) -> List[Dict[str, Any]]:
-        """List all items for a specific user."""
+        """List all active items for a specific user."""
         items = _paginate(self.items_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
-        return [self._deserialize_item(item) for item in items]
+        return [self._deserialize_item(item) for item in _active(items)]
 
     def get_items_by_location(self, user_id: str, location_id: str) -> List[Dict[str, Any]]:
-        """Get all items in a specific location for a specific user."""
+        """Get all active items in a specific location for a specific user."""
         items = _paginate(
             self.items_table.query,
             IndexName="LocationIndex",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("location_id").eq(location_id),
         )
-        return [self._deserialize_item(item) for item in items]
+        return [self._deserialize_item(item) for item in _active(items)]
 
     def get_items_by_category(self, user_id: str, category_id: str) -> List[Dict[str, Any]]:
-        """Get all items in a specific category for a specific user."""
+        """Get all active items in a specific category for a specific user."""
         items = _paginate(
             self.items_table.query,
             IndexName="CategoryIndex",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id),
         )
-        return [self._deserialize_item(item) for item in items]
+        return [self._deserialize_item(item) for item in _active(items)]
 
     def get_items_by_tag(self, user_id: str, tag: str) -> List[Dict[str, Any]]:
-        """Get all items with a specific tag for a specific user."""
-        item_ids = self.tag_service.get_items_by_tag(user_id, tag)
-        if not item_ids:
-            return []
-        return self._batch_get_items(user_id, item_ids)
+        """Get all items carrying a specific tag, from the denormalized array."""
+        wanted = tag.lower()
+        return [
+            item for item in self.list_all_items(user_id)
+            if wanted in item.get("tags", [])
+        ]
 
     def list_items(
         self,
@@ -580,7 +637,9 @@ class ItemService:
 
     def get_expiring_items(self, user_id: str, location_id: Optional[str] = None, days: int = 7) -> List[Dict[str, Any]]:
         """Get items expiring within the specified number of days for a specific user."""
-        cutoff_date = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+        # use_by_date is stored date-only (YYYY-MM-DD); compare against a date-only
+        # cutoff so the lexicographic UseByDateIndex range is correct.
+        cutoff_date = (datetime.now(timezone.utc) + timedelta(days=days)).date().isoformat()
 
         # UseByDateIndex is sparse: only items that have a use_by_date appear.
         raw = _paginate(
@@ -588,7 +647,7 @@ class ItemService:
             IndexName="UseByDateIndex",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("use_by_date").lte(cutoff_date),
         )
-        items = [self._deserialize_item(item) for item in raw]
+        items = [self._deserialize_item(item) for item in _active(raw)]
 
         if location_id:
             items = [item for item in items if item.get("location_id") == location_id]
@@ -623,32 +682,24 @@ class ItemService:
 
         if "use_by_date" in updates:
             # use_by_date backs a sparse GSI, so clearing it must REMOVE the
-            # attribute rather than SET it to NULL.
+            # attribute rather than SET it to NULL. Stored date-only (YYYY-MM-DD).
             if updates["use_by_date"] is None:
                 remove_parts.append("use_by_date")
             else:
                 set_parts.append("use_by_date = :use_by_date")
-                expr_values[":use_by_date"] = updates["use_by_date"]
+                expr_values[":use_by_date"] = _normalize_use_by_date(updates["use_by_date"])
 
         if "notes" in updates:
             set_parts.append("notes = :notes")
             expr_values[":notes"] = updates["notes"]
 
-        # Tags are denormalized onto the item and mirrored into the reverse index.
+        # Tags are denormalized onto the item (the array is the sole source of
+        # truth — no reverse-index table to keep in sync).
         if "tags" in updates:
             new_tags = sorted({t.lower() for t in updates["tags"]})
-            old_tags = set(item.get("tags", []))
-
             set_parts.append("#tags = :tags")
             expr_values[":tags"] = new_tags
             expr_names["#tags"] = "tags"
-
-            tags_to_add = set(new_tags) - old_tags
-            tags_to_remove = old_tags - set(new_tags)
-            if tags_to_add:
-                self.tag_service.add_tags_to_item(user_id, item_id, list(tags_to_add))
-            if tags_to_remove:
-                self.tag_service.remove_tags_from_item(user_id, item_id, list(tags_to_remove))
 
         # Category assignment enforces the measure-type constraint against the
         # item's effective dimensions (the incoming set if updated, else stored).
@@ -691,27 +742,153 @@ class ItemService:
             return None
 
         logger.info(f"Updated item: {item_id} for user: {user_id}")
-        return self._deserialize_item(attributes)
+        result = self._deserialize_item(attributes)
+
+        # A dimensions edit is an inventory adjustment (not a consumption); record
+        # the before/after so analytics can tell edits from genuine usage.
+        if "dimensions" in updates:
+            _emit_event(
+                self.ledger_service,
+                LedgerEvent.create(
+                    user_id, ENTITY_ITEM, item_id, EVENT_ITEM_ADJUSTED,
+                    payload={
+                        "name": result.get("name"),
+                        "location_id": result.get("location_id"),
+                        "category_id": result.get("category_id"),
+                        "dimensions_before": item.get("dimensions", []),
+                        "dimensions_after": result.get("dimensions", []),
+                    },
+                ),
+            )
+        return result
+
+    def _mark_deleted(self, user_id: str, item_id: str, when: str) -> None:
+        """Set the soft-delete marker on an item (keeps the row + its history)."""
+        self.items_table.update_item(
+            Key={"user_id": user_id, "item_id": item_id},
+            UpdateExpression="SET deleted_at = :d, updated_at = :d",
+            ExpressionAttributeValues={":d": when},
+        )
 
     def delete_item(self, user_id: str, item_id: str) -> bool:
-        """Delete an item for a specific user."""
+        """Soft-delete an item: mark it deleted and record a removal event.
+
+        This is a *data removal* (e.g. a mis-entered item), NOT a consumption —
+        see :meth:`consume_item`. The row is retained (deleted_at set) so history
+        and the ledger stay intact; live reads filter it out.
+        """
         item = self.get_item(user_id, item_id)
         if not item:
             return False
 
-        # Not-found is handled above; a genuine failure below must propagate
-        # (surfaced as 500) rather than be swallowed into a misleading 404.
-        # Remove reverse-index rows for the item's tags (read off the item).
-        tags = item.get("tags", [])
-        if tags:
-            self.tag_service.remove_tags_from_item(user_id, item_id, tags)
-
-        self.items_table.delete_item(
-            Key={"user_id": user_id, "item_id": item_id}
+        now = _now_iso()
+        self._mark_deleted(user_id, item_id, now)
+        logger.info(f"Soft-deleted item: {item_id} for user: {user_id}")
+        _emit_event(
+            self.ledger_service,
+            LedgerEvent.create(
+                user_id, ENTITY_ITEM, item_id, EVENT_ITEM_REMOVED,
+                payload={
+                    "name": item.get("name"),
+                    "location_id": item.get("location_id"),
+                    "category_id": item.get("category_id"),
+                    "dimensions": item.get("dimensions", []),
+                },
+                occurred_at=now,
+            ),
         )
-
-        logger.info(f"Deleted item: {item_id} for user: {user_id}")
         return True
+
+    def consume_item(
+        self, user_id: str, item_id: str, amount: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Record genuine **usage** of an item (distinct from deletion).
+
+        ``amount`` is a single dimension ``{dimension_type, value, unit}`` to
+        deduct; ``None`` consumes the whole item. The matching dimension is
+        decremented (converting units); if it reaches zero — or the whole item is
+        consumed — the item is soft-deleted as *depleted*. Either way an
+        ``item_consumed`` event is appended (NOT a removal). Returns the updated
+        item, or a ``{"item_id", "depleted": True}`` marker when depleted, or
+        None when the item does not exist.
+        """
+        item = self.get_item(user_id, item_id)
+        if item is None:
+            return None
+
+        now = _now_iso()
+        consumed_payload: Dict[str, Any] = {
+            "name": item.get("name"),
+            "location_id": item.get("location_id"),
+            "category_id": item.get("category_id"),
+        }
+
+        depleted = False
+        new_dimensions = item.get("dimensions", [])
+
+        if amount is None:
+            depleted = True
+            consumed_payload["consumed"] = "all"
+            consumed_payload["dimensions_before"] = item.get("dimensions", [])
+        else:
+            self._validate_dimensions([amount])
+            consumed = Dimension.from_dict(amount)
+            dtype = consumed.dimension_type.value
+
+            stored_dim = next(
+                (d for d in item.get("dimensions", [])
+                 if d.get("dimension_type") == dtype),
+                None,
+            )
+            if stored_dim is None:
+                raise ValueError(f"Item has no '{dtype}' dimension to consume")
+
+            stored = Dimension.from_dict(stored_dim)
+            remaining_base = stored.to_base_unit() - consumed.to_base_unit()
+            consumed_payload["consumed"] = amount
+
+            if remaining_base <= 0:
+                # Consuming the last of the measured dimension depletes the item.
+                depleted = True
+                consumed_payload["dimensions_before"] = item.get("dimensions", [])
+            else:
+                remaining = Dimension.from_base_unit(
+                    consumed.dimension_type, remaining_base, stored.unit
+                )
+                new_dimensions = [
+                    remaining.to_dict() if d.get("dimension_type") == dtype else d
+                    for d in item.get("dimensions", [])
+                ]
+
+        if depleted:
+            self._mark_deleted(user_id, item_id, now)
+            result: Dict[str, Any] = {"item_id": item_id, "depleted": True}
+        else:
+            # Write dimensions directly (NOT via update_item) so this records a
+            # consumption, not an adjustment.
+            response = self.items_table.update_item(
+                Key={"user_id": user_id, "item_id": item_id},
+                UpdateExpression="SET dimensions = :dims, updated_at = :u",
+                ExpressionAttributeValues={
+                    ":dims": _serialize_dimensions(new_dimensions),
+                    ":u": now,
+                },
+                ReturnValues="ALL_NEW",
+            )
+            result = self._deserialize_item(response["Attributes"])
+
+        logger.info(
+            f"Consumed item: {item_id} for user: {user_id} (depleted={depleted})"
+        )
+        _emit_event(
+            self.ledger_service,
+            LedgerEvent.create(
+                user_id, ENTITY_ITEM, item_id, EVENT_ITEM_CONSUMED,
+                payload={**consumed_payload, "depleted": depleted},
+                occurred_at=now,
+            ),
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Batch operations (act on many items in one request)
@@ -802,8 +979,8 @@ class ItemService:
         """Add ``tags`` to each of ``item_ids`` (additive, not a replace).
 
         Loops :meth:`add_item_tags`, which merges the new tags into each item's
-        existing set (lowercased, de-duplicated) and keeps the reverse index in
-        sync. Missing ids are collected in ``skipped``.
+        existing (lowercased, de-duplicated) denormalized set. Missing ids are
+        collected in ``skipped``.
 
         Returns ``{"updated": int, "skipped": [{"item_id", "reason"}, ...]}``.
         """
@@ -856,8 +1033,14 @@ class ItemService:
         return remaining
 
     def list_all_tags(self, user_id: str) -> List[str]:
-        """List all distinct tags across a user's inventory."""
-        return self.tag_service.list_all_tags(user_id)
+        """List all distinct tags across a user's active inventory (sorted).
+
+        Derived from the denormalized ``tags`` arrays (no reverse-index table).
+        """
+        tags = set()
+        for item in self.list_all_items(user_id):
+            tags.update(item.get("tags", []))
+        return sorted(tags)
 
     # ------------------------------------------------------------------
     # Search & aggregation
@@ -1075,8 +1258,10 @@ class TaskService:
     ``recurrence.py``). A ``none`` to-do has no date and stays until marked done.
     """
 
-    def __init__(self, tasks_table):
+    def __init__(self, tasks_table, ledger_service=None):
         self.tasks_table = tasks_table
+        # Optional append-only ledger; emits are best-effort (see _emit_event).
+        self.ledger_service = ledger_service
 
     @staticmethod
     def _deserialize_task(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -1154,7 +1339,9 @@ class TaskService:
         the user's whole task set rather than the single row.
         """
         response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
-        if not response.get("Item"):
+        item = response.get("Item")
+        if not item or item.get("deleted_at"):
+            # A soft-deleted task reads as absent (→ 404).
             return None
         for task in self._resolved_tasks(user_id, tz):
             if task.get("task_id") == task_id:
@@ -1167,7 +1354,7 @@ class TaskService:
         Task tags are denormalized on the task record and stored lowercased at
         create time, so no reverse index or extra normalization is needed here.
         """
-        tasks = _paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        tasks = _active(_paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id)))
         tags = set()
         for task in tasks:
             tags.update(task.get("tags", []))
@@ -1176,8 +1363,8 @@ class TaskService:
     def _resolved_tasks(
         self, user_id: str, tz: Optional[str] = None, now: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
-        """Query a user's tasks and merge computed status (trigger-aware)."""
-        raw = _paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        """Query a user's active tasks and merge computed status (trigger-aware)."""
+        raw = _active(_paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id)))
         tasks = [self._deserialize_task(t) for t in raw]
         return resolve_tasks(tasks, tz, now)
 
@@ -1319,15 +1506,17 @@ class TaskService:
         depends on; see ``recurrence.completion_window_key``.
         """
         # Query the whole partition once: we need siblings both to find the task
-        # and to resolve a triggered task's borrowed completion window.
-        raw = _paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        # and to resolve a triggered task's borrowed completion window. Exclude
+        # soft-deleted tasks.
+        raw = _active(_paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id)))
         tasks = [self._deserialize_task(t) for t in raw]
         task = next((t for t in tasks if t.get("task_id") == task_id), None)
         if task is None:
             return None
 
+        completed_at = _now_iso()
         set_parts = ["updated_at = :updated_at", "last_completed_at = :completed_at"]
-        expr_values = {":updated_at": _now_iso(), ":completed_at": _now_iso()}
+        expr_values = {":updated_at": completed_at, ":completed_at": completed_at}
 
         if task.get("answer_mode") == "yesno":
             if decision not in ("yes", "no"):
@@ -1350,6 +1539,23 @@ class TaskService:
             ReturnValues="ALL_NEW",
         )
         logger.info(f"Completed task: {task_id} for user: {user_id}")
+        # Append an immutable completion event so task-completion history survives
+        # the single-row current-state model (which keeps only the latest marker).
+        _emit_event(
+            self.ledger_service,
+            LedgerEvent.create(
+                user_id, ENTITY_TASK, task_id, EVENT_TASK_COMPLETED,
+                payload={
+                    "name": task.get("name"),
+                    "tags": task.get("tags", []),
+                    "recurrence_type": task.get("recurrence_type", "none"),
+                    "answer_mode": task.get("answer_mode", "checkbox"),
+                    "decision": decision if task.get("answer_mode") == "yesno" else None,
+                    "window": window_key or None,
+                },
+                occurred_at=completed_at,
+            ),
+        )
         # Re-resolve against the partition so a triggered task's status reflects
         # its (now possibly changed) dependency state.
         updated = self._deserialize_task(response["Attributes"])
@@ -1362,10 +1568,11 @@ class TaskService:
     ) -> Optional[Dict[str, Any]]:
         """Undo completion for the current window, making the task active again."""
         response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
-        if not response.get("Item"):
+        item = response.get("Item")
+        if not item or item.get("deleted_at"):
             return None
 
-        response = self.tasks_table.update_item(
+        self.tasks_table.update_item(
             Key={"user_id": user_id, "task_id": task_id},
             UpdateExpression=(
                 "SET updated_at = :updated_at "
@@ -1375,20 +1582,34 @@ class TaskService:
             ReturnValues="ALL_NEW",
         )
         logger.info(f"Uncompleted task: {task_id} for user: {user_id}")
+        # Record the reversal so history reflects the cleared completion.
+        _emit_event(
+            self.ledger_service,
+            LedgerEvent.create(
+                user_id, ENTITY_TASK, task_id, EVENT_TASK_UNCOMPLETED,
+                payload={"name": self._deserialize_task(item).get("name")},
+            ),
+        )
         # Re-resolve so dependents of this decision reflect its cleared state.
         return self.get_task(user_id, task_id, tz)
 
     def delete_task(self, user_id: str, task_id: str) -> bool:
-        """Delete a task for a specific user.
+        """Soft-delete a task (keeps the row + its completion history).
 
-        Returns False when the task does not exist so callers can surface a 404
-        (DynamoDB's delete_item succeeds unconditionally, so we check first).
+        Returns False when the task does not exist (or is already deleted) so
+        callers can surface a 404. No ledger event: the ledger tracks task
+        *completions*, not task CRUD.
         """
         response = self.tasks_table.get_item(Key={"user_id": user_id, "task_id": task_id})
-        if not response.get("Item"):
+        item = response.get("Item")
+        if not item or item.get("deleted_at"):
             return False
-        self.tasks_table.delete_item(Key={"user_id": user_id, "task_id": task_id})
-        logger.info(f"Deleted task: {task_id} for user: {user_id}")
+        self.tasks_table.update_item(
+            Key={"user_id": user_id, "task_id": task_id},
+            UpdateExpression="SET deleted_at = :d, updated_at = :d",
+            ExpressionAttributeValues={":d": _now_iso()},
+        )
+        logger.info(f"Soft-deleted task: {task_id} for user: {user_id}")
         return True
 
     @staticmethod

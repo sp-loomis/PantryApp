@@ -122,18 +122,6 @@ TABLES: Dict[str, TableSpec] = {
         range_key="location_id",
         attributes=[("user_id", "S"), ("location_id", "S")],
     ),
-    "item_tags": TableSpec(
-        suffix="item-tags",
-        env="ITEM_TAGS_TABLE_NAME",
-        hash_key="user_id",
-        range_key="tag_item_composite",
-        attributes=[
-            ("user_id", "S"),
-            ("tag_item_composite", "S"),
-            ("tag_name", "S"),
-        ],
-        gsis=[gsi("TagIndex", "user_id", "tag_name")],
-    ),
     "tasks": TableSpec(
         suffix="tasks",
         env="TASKS_TABLE_NAME",
@@ -174,6 +162,24 @@ TABLES: Dict[str, TableSpec] = {
         hash_key="nonce",
         attributes=[("nonce", "S")],
         ttl_attribute="expires_at",
+    ),
+    # Append-only domain-event ledger (history / analytics source of truth).
+    # PK=user_id, SK=event_sk ("{occurred_at}#{event_id}", time-ordered). The
+    # EntityIndex GSI (SK=entity_sk, "{entity_type}#{entity_id}#{occurred_at}")
+    # serves per-item / per-task history. Stream feeds the S3/Athena tier; rows
+    # are only ever inserted, so NEW_IMAGE is sufficient.
+    "ledger": TableSpec(
+        suffix="ledger",
+        env="LEDGER_TABLE_NAME",
+        hash_key="user_id",
+        range_key="event_sk",
+        attributes=[
+            ("user_id", "S"),
+            ("event_sk", "S"),
+            ("entity_sk", "S"),
+        ],
+        gsis=[gsi("EntityIndex", "user_id", "entity_sk")],
+        stream="NEW_IMAGE",
     ),
 }
 

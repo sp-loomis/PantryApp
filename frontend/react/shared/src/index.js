@@ -32,6 +32,7 @@ export {
   createItem,
   updateItem,
   deleteItem,
+  consumeItem,
   updateItemsBulk,
   deleteItemsBulk,
   addItemsTagsBulk,

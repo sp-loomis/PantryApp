@@ -75,6 +75,22 @@ export async function deleteItem(itemId) {
 }
 
 /**
+ * Record genuine usage of an item (distinct from deleting it).
+ *
+ * Pass an `amount` dimension `{dimension_type, value, unit}` to deduct, or omit
+ * it to consume the whole item. The response is `{ item }` after a partial
+ * consume, or `{ item: {item_id, depleted:true}, depleted:true }` when consuming
+ * the last of it (the item is then soft-deleted). Returns the raw response so
+ * callers can branch on `depleted`.
+ *
+ * @param {string} itemId
+ * @param {{dimension_type: string, value: number, unit: string}} [amount]
+ */
+export async function consumeItem(itemId, amount) {
+  return api.post(`/items/${itemId}/consume`, amount ? { amount } : {});
+}
+
+/**
  * Apply the same updates to many items at once (batch).
  *
  * `updates` may only set `location_id` / `category_id`. Best-effort: items that

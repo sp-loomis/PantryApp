@@ -17,11 +17,11 @@ from botocore.exceptions import ClientError
 
 from local_schema import (
     ITEMS_TABLE,
-    ITEM_TAGS_TABLE,
     LOCATIONS_TABLE,
     TASKS_TABLE,
     REPORTS_TABLE,
     MESSAGES_TABLE,
+    LEDGER_TABLE,
     TABLE_NAMES,
     create_tables,
 )
@@ -55,14 +55,15 @@ def main() -> None:
     # Import services AFTER env/tables are ready.
     from services import (
         ItemService, LocationService, TaskService,
-        ReportService, MessageService, ReportGenerator,
+        ReportService, MessageService, ReportGenerator, LedgerService,
     )
 
+    ledger_service = LedgerService(dynamodb.Table(LEDGER_TABLE))
     location_service = LocationService(dynamodb.Table(LOCATIONS_TABLE))
     item_service = ItemService(
-        dynamodb.Table(ITEMS_TABLE), dynamodb.Table(ITEM_TAGS_TABLE)
+        dynamodb.Table(ITEMS_TABLE), ledger_service=ledger_service
     )
-    task_service = TaskService(dynamodb.Table(TASKS_TABLE))
+    task_service = TaskService(dynamodb.Table(TASKS_TABLE), ledger_service=ledger_service)
     report_service = ReportService(dynamodb.Table(REPORTS_TABLE))
     message_service = MessageService(dynamodb.Table(MESSAGES_TABLE))
     report_generator = ReportGenerator(

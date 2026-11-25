@@ -1,8 +1,11 @@
 # Homestead Manager
 
-A serverless homestead management system: track pantry **inventory** across storage locations *and* stay on top of **tasks and chores** — one-shot deadlines plus recurring daily/weekly/every-N-days routines that gracefully disappear when a window passes. Built with AWS Lambda, DynamoDB, a React web app, and a Python CLI that maintains strict alignment with the REST API.
+A serverless homestead management system: track pantry **inventory** across storage locations *and* stay on top of **tasks and chores** — one-shot deadlines plus recurring daily/weekly/every-N-days routines that gracefully disappear when a window passes. Built with AWS Lambda, DynamoDB, and a React web app.
 
 > Formerly "Pantry App" — the inventory features are unchanged; task tracking is the latest addition.
+>
+> **Note:** the early-development Python CLI (`frontend/cli`) has been retired — the
+> React SPA is the primary (and only) client. The REST API below is unchanged.
 
 ## Quick Start
 
@@ -14,21 +17,6 @@ A serverless homestead management system: track pantry **inventory** across stor
 - AWS CLI configured
 
 ### Setup
-
-#### Python CLI
-
-1. **Install CLI dependencies:**
-
-   ```bash
-   cd frontend/cli
-   pip install -r requirements.txt
-   chmod +x pantry_cli.py
-   ```
-
-2. **Configure Lambda function name:**
-   ```bash
-   export PANTRY_LAMBDA_FUNCTION=dev-use1-pantry-lambda-core-api
-   ```
 
 #### React Web Frontend
 
@@ -54,9 +42,9 @@ A serverless homestead management system: track pantry **inventory** across stor
 
 See [frontend/react/README.md](frontend/react/README.md) for detailed React frontend documentation.
 
-## API & CLI Documentation
+## API Documentation
 
-The CLI maintains a one-to-one correspondence with the API. Every API endpoint has an equivalent CLI command that accepts the same parameters and returns the same JSON responses.
+The REST API is the single contract for all clients. Every endpoint is Cognito-authenticated (Bearer token) and returns JSON.
 
 ### Locations
 
@@ -65,12 +53,6 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 #### Create Location
 
 **API Endpoint:** `POST /locations`
-
-**CLI Command:**
-
-```bash
-./pantry_cli.py location create --name <name> [--description <description>]
-```
 
 **Input:**
 
@@ -98,12 +80,6 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 
 **API Endpoint:** `GET /locations`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py location list
-```
-
 **Output:**
 
 ```json
@@ -123,12 +99,6 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 
 **API Endpoint:** `GET /locations/<location_id>`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py location get <location_id>
-```
-
 **Output:**
 
 ```json
@@ -145,12 +115,6 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 #### Update Location
 
 **API Endpoint:** `PUT /locations/<location_id>`
-
-**CLI Command:**
-
-```bash
-./pantry_cli.py location update <location_id> [--name <name>] [--description <description>]
-```
 
 **Input:**
 
@@ -179,12 +143,6 @@ Storage locations represent physical areas where inventory is stored (pantry, fr
 
 **API Endpoint:** `DELETE /locations/<location_id>`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py location delete <location_id>
-```
-
 **Output:**
 
 ```json
@@ -200,17 +158,6 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 #### Add Item
 
 **API Endpoint:** `POST /items`
-
-**CLI Command:**
-
-```bash
-./pantry_cli.py item add --name <name> --location <location_id> \
-  [--quantity <qty>] [--unit <unit>] \
-  [--count <value>] \
-  [--weight <value>] [--weight-unit <unit>] \
-  [--volume <value>] [--volume-unit <unit>] \
-  [--use-by <YYYY-MM-DD>] [--tags <tag1,tag2>] [--notes <text>]
-```
 
 **Input:**
 
@@ -278,12 +225,6 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 
 **API Endpoint:** `GET /items[?location_id=<id>&tag=<tag>]`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py item list [--location <location_id>] [--tag <tag>]
-```
-
 > Name search moved to `POST /search` (fuzzy & ranked). `GET /items` exposes only
 > the structural `location`/`tag` filters.
 
@@ -312,12 +253,6 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 
 **API Endpoint:** `GET /items/<item_id>`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py item get <item_id>
-```
-
 **Output:**
 
 ```json
@@ -341,31 +276,26 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 
 **API Endpoint:** `PUT /items/<item_id>`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py item update <item_id> \
-  [--name <name>] [--location <location_id>] \
-  [--quantity <qty>] [--unit <unit>] \
-  [--count <value>] \
-  [--weight <value>] [--weight-unit <unit>] \
-  [--volume <value>] [--volume-unit <unit>] \
-  [--use-by <YYYY-MM-DD>] [--tags <tag1,tag2>] [--notes <text>]
-```
-
 **Input:** Same structure as Add Item (only include fields to update)
 
 **Output:** Same structure as Get Item with updated values
+
+#### Consume Item
+
+**API Endpoint:** `POST /items/<item_id>/consume`
+
+Records genuine **usage** of an item (distinct from deletion, which is a data
+removal). Decrements the item's matching dimension by the consumed amount and
+appends a ledger event; consuming the last of an item marks it depleted.
+
+**Output:** The updated item (or a depleted marker when fully consumed).
 
 #### Remove Item
 
 **API Endpoint:** `DELETE /items/<item_id>`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py item remove <item_id>
-```
+Soft-deletes the item (removes it from active views while preserving history);
+recorded in the ledger as a data removal, **not** a consumption.
 
 **Output:**
 
@@ -378,12 +308,6 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 #### Get Expiring Items
 
 **API Endpoint:** `GET /items/expiring[?location_id=<id>&days=<days>]`
-
-**CLI Command:**
-
-```bash
-./pantry_cli.py item expiring [--location <location_id>] [--days <days>]
-```
 
 **Query Parameters:**
 
@@ -413,21 +337,11 @@ Inventory items track what you have, where it is, quantity, dimensions, expirati
 
 **API Endpoint:** `POST /search`
 
-**CLI Command:**
-
-```bash
-./pantry_cli.py search \
-  [--name <name>] [--location <location_id>] \
-  [--tags <tag1,tag2>] \
-  [--use-by-start <YYYY-MM-DD>] [--use-by-end <YYYY-MM-DD>] \
-  [--min-score <0-1>]
-```
-
 Name matching is **fuzzy, multi-word, and order-independent**: the query is split
 into terms and _every_ term must match some word of the item name (by substring or
-typo-tolerant similarity), so `--name "milk whole"` matches "Whole Milk". Results are
+typo-tolerant similarity), so `name: "milk whole"` matches "Whole Milk". Results are
 **ranked by relevance**, and each matched item carries a `match` object with the score
-and whole-word highlight spans (character offsets into `name`) for the UI. `--min-score`
+and whole-word highlight spans (character offsets into `name`) for the UI. `min_score`
 tunes the fuzzy threshold (default `0.7`); the other criteria are applied as filters on
 top of the name match.
 
@@ -462,14 +376,6 @@ top of the name match.
 #### Aggregate Statistics
 
 **API Endpoint:** `GET /aggregate[?location_id=<id>&tag=<tag>&weight_unit=<unit>&volume_unit=<unit>]`
-
-**CLI Command:**
-
-```bash
-./pantry_cli.py stats \
-  [--location <location_id>] [--tag <tag>] \
-  [--weight-unit <unit>] [--volume-unit <unit>]
-```
 
 **Query Parameters:**
 
@@ -517,7 +423,7 @@ this query"), or an inventory query — fired on a simple daily/weekly/monthly s
 periodic EventBridge sweep generates due reports; `POST /reports/<id>/run` generates one
 immediately. Slack delivery is layered on the same engine (see below).
 
-**API (web-only; no CLI mirror):**
+**API:**
 
 - Reports: `POST /reports`, `GET /reports`, `GET /reports/<id>`, `PUT /reports/<id>`,
   `DELETE /reports/<id>`, `POST /reports/<id>/run`
@@ -538,13 +444,11 @@ connection can never post into another's workspace. Manage it in the web app und
 
 **API:**
 
-- OAuth (browser-redirect, no CLI mirror): `GET /slack/oauth/start` (Cognito-guarded,
+- OAuth (browser-redirect): `GET /slack/oauth/start` (Cognito-guarded,
   returns the authorize URL), `GET /slack/oauth/callback` (Slack redirect; bypasses
   Cognito, trust from a signed `state`)
 - Connections: `GET /slack/connections`, `GET /slack/connections/<id>/channels`,
   `DELETE /slack/connections/<id>`, `POST /slack/connections/<id>/test`
-- CLI: `slack connections list`, `slack channels list <id>`, `slack disconnect <id>`,
-  `slack test <id> --channel <channel_id>`
 
 **No endpoint ever returns the bot token.** The token is stored only as KMS ciphertext.
 The Slack `client_secret` and the OAuth `state` HMAC secret live in a single Secrets
@@ -561,30 +465,32 @@ and [`LOCAL_DEV.md`](LOCAL_DEV.md) for the local dev-stub (no real Slack needed)
 
 - **Backend**: AWS Lambda with Lambda Powertools (Python 3.11)
 - **Database**: DynamoDB with GSIs for optimized access patterns
-- **Frontend**:
-  - Python CLI with Click (outputs JSON matching API responses)
-  - React Web App with AWS Cognito authentication
+- **Frontend**: React Web App with AWS Cognito authentication
+- **Analytics**: DynamoDB Streams → S3 (JSONL) → Glue/Athena for history & SQL queries
 - **Infrastructure**: Terraform/Terragrunt
 - **Deployment**: GitHub Actions with OIDC authentication
 - **Region**: US-East-1 (Ohio)
 
 ### Database Tables
 
+All tables are user-scoped (`user_id` hash key) and billed `PAY_PER_REQUEST`.
+
 #### Items Table
 
-- **Primary Key**: `item_id` (hash), `created_at` (range)
+- **Primary Key**: `user_id` (hash), `item_id` (range)
 - **GSIs**:
   - `LocationIndex`: Query items by location
   - `UseByDateIndex`: Query items by expiration date
+  - `CategoryIndex`: Query items by category
 
 #### Locations Table
 
-- **Primary Key**: `location_id` (hash)
+- **Primary Key**: `user_id` (hash), `location_id` (range)
 
-#### Item-Tags Table
+#### Tasks / Reports / Messages / Categories / Slack
 
-- **Primary Key**: `tag_name` (hash), `item_id` (range)
-- **GSI**: `ItemTagsIndex` for reverse lookup
+- Each is user-scoped with its own range key. Messages carry a sparse `UnreadIndex`;
+  the ledger (append-only history) carries an `EntityIndex` for per-item/task lookups.
 
 ### Resource Naming Convention
 
@@ -599,13 +505,13 @@ Example: `dev-use1-pantry-lambda-core-api`
 ```
 PantryApp/
 ├── frontend/
-│   ├── cli/                # Python CLI application
 │   └── react/              # React web frontend
 │       ├── shared/         # Platform-agnostic business logic
 │       └── web/            # React web application
 ├── backend/                # Lambda function code
 │   ├── app.py             # Main Lambda handler with Powertools
 │   ├── models.py          # Data models
+│   ├── schema.py          # Single-source DynamoDB table schema
 │   └── services.py        # Business logic services
 ├── terraform/             # Infrastructure as Code
 │   ├── modules/           # Reusable Terraform modules
@@ -629,17 +535,6 @@ This project uses Claude as Lead Developer and Gemini CLI as Subject Matter Expe
 - `GEMINI.md` - Instructions for Gemini CLI
 - `CODEOWNERS` - Code ownership definitions
 
-### CLI/API Alignment Standards
-
-The project maintains strict one-to-one correspondence between CLI and API:
-
-1. **One-to-One Mapping**: Every API endpoint has exactly one CLI command
-2. **Argument Alignment**: CLI arguments match API parameters exactly
-3. **JSON Output**: All CLI commands output pretty-printed JSON matching API responses
-4. **Consistent Behavior**: Same input validation, error messages, and response structure
-
-See `.claude/CLAUDE.md` for detailed alignment requirements.
-
 ### Local Testing
 
 **Test Lambda locally:**
@@ -649,6 +544,8 @@ cd backend
 pip install -r requirements.txt
 python -c "from app import lambda_handler; print(lambda_handler({'httpMethod': 'GET', 'path': '/locations'}, {}))"
 ```
+
+See [`LOCAL_DEV.md`](LOCAL_DEV.md) for the full local stack (DynamoDB Local + Flask shim + Vite).
 
 **Terraform operations:**
 
@@ -672,7 +569,7 @@ terragrunt apply
 
    ```bash
    # Create S3 bucket for Terraform state
-   aws s3 mb s3://dev-use1-pantry-terraform-state --regionus-east-1
+   aws s3 mb s3://dev-use1-pantry-terraform-state --region us-east-1
 
    # Enable versioning
    aws s3api put-bucket-versioning \
@@ -685,7 +582,7 @@ terragrunt apply
      --attribute-definitions AttributeName=LockID,AttributeType=S \
      --key-schema AttributeName=LockID,KeyType=HASH \
      --billing-mode PAY_PER_REQUEST \
-     --regionus-east-1
+     --region us-east-1
    ```
 
 4. **Deploy via GitHub Actions:**

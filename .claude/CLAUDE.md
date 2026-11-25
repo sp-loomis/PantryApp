@@ -76,49 +76,21 @@ The developer owns all git operations. You are **STRICTLY PROHIBITED** from runn
 
 Read-only git inspection (`git status`, `git diff`, `git log`) is fine.
 
-## CLI/API Alignment Standards
+## Client Standards
 
-> **Status (relaxed):** The `frontend/cli` tool was an early-development harness for
-> exercising the API before the React SPA existed. The web SPA is now the primary
-> client, so the **CLI mirror is optional, not required**. New API endpoints do
-> **not** need a matching CLI command. When you *do* touch the CLI, keep the
-> conventions below (JSON output, argument alignment) so existing commands stay
-> consistent. If you add an endpoint without a CLI mirror, note it in the PR.
+> **Status (CLI retired):** The `frontend/cli` tool was an early-development harness
+> for exercising the API before the React SPA existed. It has been **removed** — the
+> React SPA is now the sole client. There is **no CLI to maintain**; ignore any older
+> reference to CLI/API alignment or `frontend/cli/pantry_cli.py`.
 
-The guidance below describes the original one-to-one correspondence, kept as the
-convention for any CLI work that is done:
+### When Adding or Modifying API Endpoints
 
-### Requirements
-
-1. **One-to-One Mapping**: Where a CLI command exists, it should map to exactly one API endpoint
-   - API endpoint: `POST /locations` → CLI command: `location create`
-   - API endpoint: `GET /items/<item_id>` → CLI command: `item get <item_id>`
-
-2. **Argument Alignment**: CLI arguments must exactly match API input parameters
-   - API parameter names should be preserved in CLI option names
-   - Required API parameters must be required CLI options
-   - Optional API parameters must be optional CLI options
-
-3. **JSON Output**: All CLI commands must output **pretty-printed JSON** that matches API responses
-   - Use `json.dumps(result, indent=2)` for all output
-   - No rich formatting (tables, panels, colors) in the CLI
-   - Error responses should also be JSON formatted
-
-4. **Consistent Behavior**: CLI commands should behave identically to direct API calls
-   - Same input validation
-   - Same error messages
-   - Same response structure
-
-### When Adding New Features
-
-When adding or modifying API endpoints, keep the primary clients in sync:
+Keep the single client in sync:
 
 1. Add/modify the API endpoint in `backend/app.py`
 2. Add/modify the corresponding React service in `frontend/react/shared/src/services/`
-3. Update any tests to verify the API behavior (unit + e2e)
-4. Document the new endpoint if needed
-5. *(Optional)* mirror the endpoint as a CLI command in `frontend/cli/pantry_cli.py`
-   if the CLI is being maintained for that resource
+3. Update tests to verify the API behavior (unit + e2e)
+4. Document the new endpoint if needed (`README.md`)
 
 ### Example
 
@@ -133,22 +105,12 @@ def create_item():
         quantity=data.get('quantity', 1)
     )
     return {"item": item}, 201
+```
 
-# CLI Command (frontend/cli/pantry_cli.py)
-@item.command(name='add')
-@click.option('--name', required=True, help='Item name')
-@click.option('--location', required=True, help='Location ID')
-@click.option('--quantity', type=float, default=1.0, help='Quantity')
-def add_item(name: str, location: str, quantity: float):
-    """Add a new inventory item."""
-    result = invoke_lambda('POST', '/items', {
-        'name': name,
-        'location_id': location,
-        'quantity': quantity
-    })
-    print(json.dumps(result, indent=2))
-    if 'error' in result:
-        sys.exit(1)
+```javascript
+// React service (frontend/react/shared/src/services/inventoryService.js)
+export const createItem = (payload) =>
+  api.post('/items', payload).then((data) => data.item);
 ```
 
 ## Best Practices
@@ -159,7 +121,6 @@ def add_item(name: str, location: str, quantity: float):
 5. **Small, focused changes**: Keep each change set focused and reviewable so the developer's PRs stay small
 6. **Communicate**: Over-communicate rather than under-communicate
 7. **Be Professional**: You represent the project's technical leadership
-8. **Maintain CLI/API Alignment**: Always update both CLI and API together
 
 ## Example Workflow
 

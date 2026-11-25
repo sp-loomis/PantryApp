@@ -124,6 +124,22 @@ def _serialize_dimensions(dimensions: List[Dict[str, Any]]) -> List[Dict[str, An
     return serialized
 
 
+def _paginate(operation, **kwargs) -> List[Dict[str, Any]]:
+    """Run a DynamoDB ``query``/``scan`` to exhaustion, following LastEvaluatedKey.
+
+    A single call returns at most a 1 MB page; without this, list/query paths
+    silently truncate large user partitions. Pass the bound table method
+    (``table.query`` / ``table.scan``) and its kwargs; returns every ``Item``.
+    """
+    items: List[Dict[str, Any]] = []
+    response = operation(**kwargs)
+    items.extend(response.get("Items", []))
+    while "LastEvaluatedKey" in response:
+        response = operation(**kwargs, ExclusiveStartKey=response["LastEvaluatedKey"])
+        items.extend(response.get("Items", []))
+    return items
+
+
 class LocationService:
     """Service for managing storage locations."""
 
@@ -146,10 +162,7 @@ class LocationService:
 
     def list_locations(self, user_id: str) -> List[Dict[str, Any]]:
         """List all storage locations for a specific user."""
-        response = self.table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        return response.get("Items", [])
+        return _paginate(self.table.query, KeyConditionExpression=Key("user_id").eq(user_id))
 
     def update_location(self, user_id: str, location_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a storage location for a specific user."""
@@ -242,8 +255,7 @@ class CategoryService:
 
     def list_categories(self, user_id: str) -> List[Dict[str, Any]]:
         """List all categories for a specific user."""
-        response = self.table.query(KeyConditionExpression=Key("user_id").eq(user_id))
-        return response.get("Items", [])
+        return _paginate(self.table.query, KeyConditionExpression=Key("user_id").eq(user_id))
 
     def update_category(
         self, user_id: str, category_id: str, updates: Dict[str, Any]
@@ -323,18 +335,11 @@ class CategoryService:
         """Remove ``category_id`` from every item that references this category."""
         if self.items_table is None:
             return
-        response = self.items_table.query(
+        items = _paginate(
+            self.items_table.query,
             IndexName="CategoryIndex",
             KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id),
         )
-        items = response.get("Items", [])
-        while "LastEvaluatedKey" in response:
-            response = self.items_table.query(
-                IndexName="CategoryIndex",
-                KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id),
-                ExclusiveStartKey=response["LastEvaluatedKey"],
-            )
-            items.extend(response.get("Items", []))
         for item in items:
             # category_id backs a sparse GSI, so clearing it must REMOVE the attribute.
             self.items_table.update_item(
@@ -518,26 +523,26 @@ class ItemService:
 
     def list_all_items(self, user_id: str) -> List[Dict[str, Any]]:
         """List all items for a specific user."""
-        response = self.items_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        return [self._deserialize_item(item) for item in response.get("Items", [])]
+        items = _paginate(self.items_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        return [self._deserialize_item(item) for item in items]
 
     def get_items_by_location(self, user_id: str, location_id: str) -> List[Dict[str, Any]]:
         """Get all items in a specific location for a specific user."""
-        response = self.items_table.query(
+        items = _paginate(
+            self.items_table.query,
             IndexName="LocationIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id) & Key("location_id").eq(location_id)
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("location_id").eq(location_id),
         )
-        return [self._deserialize_item(item) for item in response.get("Items", [])]
+        return [self._deserialize_item(item) for item in items]
 
     def get_items_by_category(self, user_id: str, category_id: str) -> List[Dict[str, Any]]:
         """Get all items in a specific category for a specific user."""
-        response = self.items_table.query(
+        items = _paginate(
+            self.items_table.query,
             IndexName="CategoryIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id)
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("category_id").eq(category_id),
         )
-        return [self._deserialize_item(item) for item in response.get("Items", [])]
+        return [self._deserialize_item(item) for item in items]
 
     def get_items_by_tag(self, user_id: str, tag: str) -> List[Dict[str, Any]]:
         """Get all items with a specific tag for a specific user."""
@@ -578,11 +583,12 @@ class ItemService:
         cutoff_date = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
 
         # UseByDateIndex is sparse: only items that have a use_by_date appear.
-        response = self.items_table.query(
+        raw = _paginate(
+            self.items_table.query,
             IndexName="UseByDateIndex",
-            KeyConditionExpression=Key("user_id").eq(user_id) & Key("use_by_date").lte(cutoff_date)
+            KeyConditionExpression=Key("user_id").eq(user_id) & Key("use_by_date").lte(cutoff_date),
         )
-        items = [self._deserialize_item(item) for item in response.get("Items", [])]
+        items = [self._deserialize_item(item) for item in raw]
 
         if location_id:
             items = [item for item in items if item.get("location_id") == location_id]
@@ -1161,11 +1167,9 @@ class TaskService:
         Task tags are denormalized on the task record and stored lowercased at
         create time, so no reverse index or extra normalization is needed here.
         """
-        response = self.tasks_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
+        tasks = _paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
         tags = set()
-        for task in response.get("Items", []):
+        for task in tasks:
             tags.update(task.get("tags", []))
         return sorted(tags)
 
@@ -1173,10 +1177,8 @@ class TaskService:
         self, user_id: str, tz: Optional[str] = None, now: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
         """Query a user's tasks and merge computed status (trigger-aware)."""
-        response = self.tasks_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        tasks = [self._deserialize_task(t) for t in response.get("Items", [])]
+        raw = _paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        tasks = [self._deserialize_task(t) for t in raw]
         return resolve_tasks(tasks, tz, now)
 
     def list_tasks(
@@ -1318,8 +1320,8 @@ class TaskService:
         """
         # Query the whole partition once: we need siblings both to find the task
         # and to resolve a triggered task's borrowed completion window.
-        query = self.tasks_table.query(KeyConditionExpression=Key("user_id").eq(user_id))
-        tasks = [self._deserialize_task(t) for t in query.get("Items", [])]
+        raw = _paginate(self.tasks_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        tasks = [self._deserialize_task(t) for t in raw]
         task = next((t for t in tasks if t.get("task_id") == task_id), None)
         if task is None:
             return None
@@ -1575,10 +1577,8 @@ class ReportService:
 
     def list_reports(self, user_id: str) -> List[Dict[str, Any]]:
         """List all of a user's reports."""
-        response = self.reports_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        return [self._deserialize_report(r) for r in response.get("Items", [])]
+        reports = _paginate(self.reports_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        return [self._deserialize_report(r) for r in reports]
 
     def update_report(
         self, user_id: str, report_id: str, updates: Dict[str, Any], now: Optional[Any] = None
@@ -1658,17 +1658,11 @@ class ReportService:
         a constant partition keyed by next_run instead.
         """
         now_iso = (now.astimezone(timezone.utc).isoformat() if now is not None else _now_iso())
-        response = self.reports_table.scan(
-            FilterExpression=Attr("enabled").eq(True) & Attr("next_run").lte(now_iso)
+        rows = _paginate(
+            self.reports_table.scan,
+            FilterExpression=Attr("enabled").eq(True) & Attr("next_run").lte(now_iso),
         )
-        items = [self._deserialize_report(r) for r in response.get("Items", [])]
-        while "LastEvaluatedKey" in response:
-            response = self.reports_table.scan(
-                FilterExpression=Attr("enabled").eq(True) & Attr("next_run").lte(now_iso),
-                ExclusiveStartKey=response["LastEvaluatedKey"],
-            )
-            items.extend(self._deserialize_report(r) for r in response.get("Items", []))
-        return items
+        return [self._deserialize_report(r) for r in rows]
 
     def mark_run(
         self, user_id: str, report_id: str, schedule: Dict[str, Any], now: Optional[Any] = None
@@ -1751,31 +1745,38 @@ class MessageService:
 
     def list_messages(self, user_id: str) -> List[Dict[str, Any]]:
         """List a user's messages, newest first."""
-        response = self.messages_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        messages = [self._deserialize_message(m) for m in response.get("Items", [])]
+        raw = _paginate(self.messages_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        messages = [self._deserialize_message(m) for m in raw]
         messages.sort(key=lambda m: m.get("created_at", ""), reverse=True)
         return messages
 
     def list_unread(self, user_id: str) -> List[Dict[str, Any]]:
         """List a user's unread messages via the sparse UnreadIndex, newest first."""
-        response = self.messages_table.query(
+        raw = _paginate(
+            self.messages_table.query,
             IndexName=self.UNREAD_INDEX,
             KeyConditionExpression=Key("user_id").eq(user_id),
         )
-        messages = [self._deserialize_message(m) for m in response.get("Items", [])]
+        messages = [self._deserialize_message(m) for m in raw]
         messages.sort(key=lambda m: m.get("created_at", ""), reverse=True)
         return messages
 
     def unread_count(self, user_id: str) -> int:
         """Count a user's unread messages (queries the sparse index)."""
-        response = self.messages_table.query(
-            IndexName=self.UNREAD_INDEX,
-            KeyConditionExpression=Key("user_id").eq(user_id),
-            Select="COUNT",
-        )
-        return response.get("Count", 0)
+        count = 0
+        kwargs = {
+            "IndexName": self.UNREAD_INDEX,
+            "KeyConditionExpression": Key("user_id").eq(user_id),
+            "Select": "COUNT",
+        }
+        response = self.messages_table.query(**kwargs)
+        count += response.get("Count", 0)
+        while "LastEvaluatedKey" in response:
+            response = self.messages_table.query(
+                **kwargs, ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+            count += response.get("Count", 0)
+        return count
 
     def mark_read(self, user_id: str, message_id: str) -> Optional[Dict[str, Any]]:
         """Mark a message read (writes read_at, dropping it from the unread index)."""
@@ -2217,10 +2218,8 @@ class SlackService:
     # -- connections --------------------------------------------------------
     def list_connections(self, user_id: str) -> List[Dict[str, Any]]:
         """List a user's connected workspaces (token stripped)."""
-        response = self.connections_table.query(
-            KeyConditionExpression=Key("user_id").eq(user_id)
-        )
-        return [SlackConnection.public_from_item(item) for item in response.get("Items", [])]
+        rows = _paginate(self.connections_table.query, KeyConditionExpression=Key("user_id").eq(user_id))
+        return [SlackConnection.public_from_item(item) for item in rows]
 
     def list_channels(self, user_id: str, connection_id: str) -> List[Dict[str, Any]]:
         """List channels for the picker (public + private the bot can see)."""

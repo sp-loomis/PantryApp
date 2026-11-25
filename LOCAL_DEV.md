@@ -58,18 +58,17 @@ connect** instead of real OAuth: the shim sets `ENVIRONMENT=local`, which flips
 `SlackService` into a no-network mode — passthrough token "encryption" (no KMS),
 a stubbed app secret, and canned Slack API responses (fake channels, ok posts).
 
-Create a fake connection (no real Slack) and exercise the whole flow:
+Create a fake connection (no real Slack) and exercise the whole flow via the shim
+on `:8000` (the web app's **Settings → Integrations** drives the same endpoints):
 
 ```bash
-# via the CLI (invokes the Lambda directly)
-cd frontend/cli
-python pantry_cli.py slack connections list        # []
-# dev-stub has no CLI command; use the web app button or curl the shim:
+curl http://localhost:8000/slack/connections                 # []
 curl -X POST http://localhost:8000/slack/connections/dev-stub \
   -H 'Content-Type: application/json' -d '{"team_name":"Local Dev Workspace"}'
-python pantry_cli.py slack channels list <connection_id>   # canned: general, random
-python pantry_cli.py slack test <connection_id> --channel C_LOCAL_GENERAL
-python pantry_cli.py slack disconnect <connection_id>
+curl http://localhost:8000/slack/connections/<connection_id>/channels   # canned: general, random
+curl -X POST http://localhost:8000/slack/connections/<connection_id>/test \
+  -H 'Content-Type: application/json' -d '{"channel_id":"C_LOCAL_GENERAL"}'
+curl -X DELETE http://localhost:8000/slack/connections/<connection_id>
 ```
 
 In the web app: **Settings → Integrations** shows an **Add dev stub** button (only

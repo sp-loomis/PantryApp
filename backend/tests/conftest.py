@@ -22,152 +22,31 @@ import boto3
 import pytest
 from moto import mock_aws
 
-ITEMS_TABLE = "test-items"
-LOCATIONS_TABLE = "test-locations"
-CATEGORIES_TABLE = "test-categories"
-ITEM_TAGS_TABLE = "test-item-tags"
-TASKS_TABLE = "test-tasks"
-REPORTS_TABLE = "test-reports"
-MESSAGES_TABLE = "test-messages"
-SLACK_CONNECTIONS_TABLE = "test-slack-connections"
-SLACK_NONCES_TABLE = "test-slack-nonces"
+import schema
+
+# Test-harness prefix; concrete names derive from the shared schema specs.
+TEST_PREFIX = "test-"
+ITEMS_TABLE = schema.TABLES["items"].name(TEST_PREFIX)
+LOCATIONS_TABLE = schema.TABLES["locations"].name(TEST_PREFIX)
+CATEGORIES_TABLE = schema.TABLES["categories"].name(TEST_PREFIX)
+ITEM_TAGS_TABLE = schema.TABLES["item_tags"].name(TEST_PREFIX)
+TASKS_TABLE = schema.TABLES["tasks"].name(TEST_PREFIX)
+REPORTS_TABLE = schema.TABLES["reports"].name(TEST_PREFIX)
+MESSAGES_TABLE = schema.TABLES["messages"].name(TEST_PREFIX)
+SLACK_CONNECTIONS_TABLE = schema.TABLES["slack_connections"].name(TEST_PREFIX)
+SLACK_NONCES_TABLE = schema.TABLES["slack_nonces"].name(TEST_PREFIX)
 
 # Default authenticated user for requests that don't specify one.
 USER = "user-1"
 
 
 # ---------------------------------------------------------------------------
-# Table schema (kept in one place so unit and E2E tests share it)
+# Table schema (single source in ``schema.py``, shared with the local harness)
 # ---------------------------------------------------------------------------
 
-def _gsi(name: str, hash_key: str, range_key: str) -> Dict[str, Any]:
-    return {
-        "IndexName": name,
-        "KeySchema": [
-            {"AttributeName": hash_key, "KeyType": "HASH"},
-            {"AttributeName": range_key, "KeyType": "RANGE"},
-        ],
-        "Projection": {"ProjectionType": "ALL"},
-    }
-
-
 def create_tables(dynamodb) -> None:
-    """Create the three tables with the same key schema/GSIs as production."""
-    dynamodb.create_table(
-        TableName=ITEMS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "item_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "item_id", "AttributeType": "S"},
-            {"AttributeName": "location_id", "AttributeType": "S"},
-            {"AttributeName": "use_by_date", "AttributeType": "S"},
-            {"AttributeName": "category_id", "AttributeType": "S"},
-        ],
-        GlobalSecondaryIndexes=[
-            _gsi("LocationIndex", "user_id", "location_id"),
-            _gsi("UseByDateIndex", "user_id", "use_by_date"),
-            _gsi("CategoryIndex", "user_id", "category_id"),
-        ],
-    )
-    dynamodb.create_table(
-        TableName=CATEGORIES_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "category_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "category_id", "AttributeType": "S"},
-        ],
-    )
-    dynamodb.create_table(
-        TableName=LOCATIONS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "location_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "location_id", "AttributeType": "S"},
-        ],
-    )
-    dynamodb.create_table(
-        TableName=ITEM_TAGS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "tag_item_composite", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "tag_item_composite", "AttributeType": "S"},
-            {"AttributeName": "tag_name", "AttributeType": "S"},
-        ],
-        GlobalSecondaryIndexes=[_gsi("TagIndex", "user_id", "tag_name")],
-    )
-    dynamodb.create_table(
-        TableName=TASKS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "task_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "task_id", "AttributeType": "S"},
-        ],
-    )
-    dynamodb.create_table(
-        TableName=REPORTS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "report_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "report_id", "AttributeType": "S"},
-        ],
-    )
-    dynamodb.create_table(
-        TableName=MESSAGES_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "message_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "message_id", "AttributeType": "S"},
-            {"AttributeName": "unread_sort", "AttributeType": "S"},
-        ],
-        # UnreadIndex is sparse: only unread messages carry unread_sort.
-        GlobalSecondaryIndexes=[_gsi("UnreadIndex", "user_id", "unread_sort")],
-    )
-    dynamodb.create_table(
-        TableName=SLACK_CONNECTIONS_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[
-            {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "connection_id", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "connection_id", "AttributeType": "S"},
-        ],
-    )
-    dynamodb.create_table(
-        TableName=SLACK_NONCES_TABLE,
-        BillingMode="PAY_PER_REQUEST",
-        KeySchema=[{"AttributeName": "nonce", "KeyType": "HASH"}],
-        AttributeDefinitions=[{"AttributeName": "nonce", "AttributeType": "S"}],
-    )
+    """Create all app tables with the same key schema/GSIs as production."""
+    schema.create_all(dynamodb, TEST_PREFIX)
 
 
 # ---------------------------------------------------------------------------
@@ -346,15 +225,8 @@ def api(dynamodb_tables):
     ``app`` builds its service/table objects at import time, so the tables must
     exist and the env must be set *before* (re)loading it, inside the mock.
     """
-    os.environ["ITEMS_TABLE_NAME"] = ITEMS_TABLE
-    os.environ["LOCATIONS_TABLE_NAME"] = LOCATIONS_TABLE
-    os.environ["CATEGORIES_TABLE_NAME"] = CATEGORIES_TABLE
-    os.environ["ITEM_TAGS_TABLE_NAME"] = ITEM_TAGS_TABLE
-    os.environ["TASKS_TABLE_NAME"] = TASKS_TABLE
-    os.environ["REPORTS_TABLE_NAME"] = REPORTS_TABLE
-    os.environ["MESSAGES_TABLE_NAME"] = MESSAGES_TABLE
-    os.environ["SLACK_CONNECTIONS_TABLE_NAME"] = SLACK_CONNECTIONS_TABLE
-    os.environ["SLACK_NONCES_TABLE_NAME"] = SLACK_NONCES_TABLE
+    for env_name, table_name in schema.table_names(TEST_PREFIX).items():
+        os.environ[env_name] = table_name
     # Local mode keeps SlackService off KMS/Secrets/Slack (canned responses) and
     # enables the dev-stub connect route, so Slack routes are E2E-testable.
     os.environ["ENVIRONMENT"] = "local"
